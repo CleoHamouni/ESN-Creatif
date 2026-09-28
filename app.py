@@ -56,11 +56,11 @@ SUPPORTS = {
 }
 
 DIFFUSIONS = {
-    "Moins de 1 000 exemplaires / vues": 0.60,
-    "1 000 à 10 000": 0.85,
-    "10 001 à 100 000": 1.10,
-    "100 001 à 1 000 000": 1.45,
-    "Plus de 1 000 000": 1.90,
+    "Moins de 1 000 exemplaires / vues": 0.50,
+    "1 000 à 10 000": 1.00,
+    "10 001 à 100 000": 2.00,
+    "100 001 à 1 000 000": 4.00,
+    "Plus de 1 000 000": 8.00,
 }
 
 TERRITOIRES = {
@@ -79,9 +79,9 @@ DUREES = {
 
 EXCLUSIVITES = {
     "Aucune exclusivité": 1.00,
-    "Exclusivité limitée à un secteur": 1.25,
-    "Exclusivité territoriale": 1.45,
-    "Exclusivité totale": 1.90,
+    "Exclusivité limitée à un secteur": 2.00,
+    "Exclusivité territoriale": 3.50,
+    "Exclusivité totale": 6.00,
 }
 
 for key, default in {
