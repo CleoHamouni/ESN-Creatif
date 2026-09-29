@@ -6,632 +6,230 @@ from html import escape
 import streamlit as st
 
 st.set_page_config(page_title="Manager de créatifs", page_icon="🎨", layout="wide")
+st.markdown("""
+<style>
+.block-container{padding-top:1.5rem;padding-bottom:4rem}.hero{padding:25px;border-radius:18px;color:white;background:linear-gradient(135deg,#18354D,#25647A);margin-bottom:20px}.card{padding:16px;border:1px solid #DDE6EA;border-radius:14px;background:white;margin-bottom:12px}div[data-testid="stMetric"]{border:1px solid #DDE6EA;padding:14px;border-radius:12px;background:white}.stButton>button{background:#18A99A;color:white;border:none;font-weight:700}</style>
+""", unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <style>
-    .block-container {padding-top: 1.6rem; padding-bottom: 4rem;}
-    .hero {padding: 25px; border-radius: 18px; color: white;
-        background: linear-gradient(135deg,#18354D,#25647A); margin-bottom: 20px;}
-    .card {padding: 16px; border: 1px solid #DDE6EA; border-radius: 14px;
-        background: white; margin-bottom: 12px;}
-    .small {color:#65727A; font-size:14px;}
-    div[data-testid="stMetric"] {border:1px solid #DDE6EA; padding:14px;
-        border-radius:12px; background:white;}
-    .stButton > button {background:#18A99A; color:white; border:none; font-weight:700;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+PROFESSIONS=["Photographe","Vidéaste","Monteur vidéo","Pilote de drone","Graphiste","Motion designer","Directeur artistique","Community manager","Maquilleur / Maquilleuse","Styliste","Illustrateur / Illustratrice","Retoucheur / Retoucheuse","Sound designer","Ingénieur du son","Rédacteur / Rédactrice"]
+BUDGET_MODES=["Le client a une enveloppe précise","Le client a une fourchette budgétaire","Le client attend notre estimation","Budget à confirmer"]
+CRITERION_OPTIONS={
+"Support / usage":["Usage interne","Site institutionnel","Réseaux sociaux organiques","Presse éditoriale","Édition commerciale","Affichage promotionnel","Campagne publicitaire","Packaging / merchandising"],
+"Diffusion":["Moins de 1 000 exemplaires / vues","1 000 à 10 000","10 001 à 100 000","100 001 à 1 000 000","Plus de 1 000 000"],
+"Territoire":["Local / régional","France","Europe","Monde"],
+"Durée":["Opération ponctuelle, 3 mois maximum","Jusqu'à 1 an","Jusqu'à 3 ans","Plus de 3 ans"],
+"Exclusivité":["Aucune exclusivité","Exclusivité limitée à un secteur","Exclusivité territoriale","Exclusivité totale"]}
+COEFFICIENTS={"Support / usage":[.35,.70,.75,1,1.5,1.75,3,2.5],"Diffusion":[.5,1,2,4,8],"Territoire":[.7,1,1.75,3],"Durée":[.6,1,2,3.5],"Exclusivité":[1,2,3.5,6]}
+IMPORTANCE_OPTIONS={"Livrable technique ou accessoire · 20 %":.20,"Création standard · 40 %":.40,"Création centrale · 60 %":.60,"Création à forte valeur commerciale · 80 %":.80,"Création signature ou stratégique · 100 %":1.00}
+URGENCY_OPTIONS={"Planning normal · 0 %":0,"Délai resserré · 15 %":.15,"Urgent · 30 %":.30,"Très urgent · 50 %":.50,"Priorité absolue · 75 %":.75}
+MINIMUM_RIGHTS=100.0
 
-PROFESSIONS = [
-    "Photographe", "Vidéaste", "Monteur vidéo", "Pilote de drone",
-    "Graphiste", "Motion designer", "Directeur artistique",
-    "Community manager", "Maquilleur / Maquilleuse", "Styliste",
-    "Illustrateur / Illustratrice", "Retoucheur / Retoucheuse",
-    "Sound designer", "Ingénieur du son", "Rédacteur / Rédactrice",
-]
+for k,v in {"briefs":[],"opportunities":[],"last_pricing":None,"last_context":{}}.items():
+    if k not in st.session_state: st.session_state[k]=v
 
-BUDGET_MODES = [
-    "Le client a une enveloppe précise",
-    "Le client a une fourchette budgétaire",
-    "Le client attend notre estimation",
-    "Budget à confirmer",
-]
+def euro(v): return f"{float(v or 0):,.2f} €".replace(","," ").replace(".",",")
+def fmt_date(v): return v or "Non renseignée"
+def budget_summary(b):
+    m=b.get("budget_mode","Budget à confirmer")
+    if m==BUDGET_MODES[0]: return f"{m} : {euro(b.get('budget_exact'))}"
+    if m==BUDGET_MODES[1]: return f"{m} : {euro(b.get('budget_min'))} à {euro(b.get('budget_max'))}"
+    return m
 
-CRITERION_OPTIONS = {
-    "Support / usage": [
-        "Usage interne", "Site institutionnel", "Réseaux sociaux organiques",
-        "Presse éditoriale", "Édition commerciale", "Affichage promotionnel",
-        "Campagne publicitaire", "Packaging / merchandising",
-    ],
-    "Diffusion": [
-        "Moins de 1 000 exemplaires / vues", "1 000 à 10 000",
-        "10 001 à 100 000", "100 001 à 1 000 000", "Plus de 1 000 000",
-    ],
-    "Territoire": ["Local / régional", "France", "Europe", "Monde"],
-    "Durée": [
-        "Opération ponctuelle, 3 mois maximum", "Jusqu'à 1 an",
-        "Jusqu'à 3 ans", "Plus de 3 ans",
-    ],
-    "Exclusivité": [
-        "Aucune exclusivité", "Exclusivité limitée à un secteur",
-        "Exclusivité territoriale", "Exclusivité totale",
-    ],
-}
+def auto_estimate(brief):
+    """Abaque interne explicable, à valider humainement avant devis."""
+    profiles=max(1,int(brief.get("profile_count",1) or 1))
+    professions=brief.get("professions",[])
+    deliverables=(brief.get("deliverables") or "").lower()
+    project=(brief.get("project_type") or "").lower()
+    prep=2.0+1.0*profiles
+    production=6.0*profiles
+    post=2.0*profiles
+    if "vidéo" in project or "Vidéaste" in professions: production+=2*profiles; post+=4*profiles
+    if "Monteur vidéo" in professions: post+=4*profiles
+    if "Photographe" in professions: post+=2*profiles
+    if "Motion designer" in professions: post+=6*profiles
+    if "Graphiste" in professions or "Illustrateur / Illustratrice" in professions: production+=2*profiles; post+=2*profiles
+    if any(x in deliverables for x in ["plusieurs","déclinaison","versions","série"]): post+=3
+    if brief.get("multi_role_allowed")=="Oui" and len(professions)>1: production*=.9; post*=.9
+    urgency_map={"Normal":"Planning normal · 0 %","Resserré":"Délai resserré · 15 %","Urgent":"Urgent · 30 %","Très urgent":"Très urgent · 50 %","À confirmer":"Planning normal · 0 %"}
+    type_importance={"campagne":"Création à forte valeur commerciale · 80 %","photo":"Création centrale · 60 %","vidéo":"Création centrale · 60 %","graphisme":"Création centrale · 60 %","motion design":"Création centrale · 60 %","contenu social":"Création standard · 40 %","événement":"Création standard · 40 %"}
+    assumptions=[f"{profiles} profil(s)",f"métiers : {', '.join(professions) if professions else 'non renseignés'}","pas de complexité technique exceptionnelle supposée","un cycle de validation standard supposé"]
+    return {"preparation_hours":round(prep,1),"production_hours":round(production,1),"postproduction_hours":round(post,1),"preparation_rate":50.0,"production_rate":75.0,"postproduction_rate":60.0,"importance":type_importance.get(project,"Création centrale · 60 %"),"urgency":urgency_map.get(brief.get("urgency_known"),"Planning normal · 0 %"),"assumptions":assumptions}
 
-COEFFICIENTS = {
-    "Support / usage": [0.35, 0.70, 0.75, 1.00, 1.50, 1.75, 3.00, 2.50],
-    "Diffusion": [0.50, 1.00, 2.00, 4.00, 8.00],
-    "Territoire": [0.70, 1.00, 1.75, 3.00],
-    "Durée": [0.60, 1.00, 2.00, 3.50],
-    "Exclusivité": [1.00, 2.00, 3.50, 6.00],
-}
+def compute_price(ph,prh,poh,pr,rr,por,importance,urgency,selections,expenses,margin_pct,discount_pct):
+    preparation=ph*pr; production=prh*rr; postproduction=poh*por; creative=preparation+production+postproduction
+    base_rights=creative*IMPORTANCE_OPTIONS[importance]; urgency_amount=creative*URGENCY_OPTIONS[urgency]
+    factor=1.0; details=[]
+    for criterion,choice in selections.items():
+        idx=CRITERION_OPTIONS[criterion].index(choice); coef=COEFFICIENTS[criterion][idx]; factor*=coef; details.append((criterion,choice,coef))
+    calculated=base_rights*factor; rights=max(MINIMUM_RIGHTS,calculated) if base_rights else 0
+    subtotal=creative+urgency_amount+rights+expenses; margin=subtotal*margin_pct/100; before=subtotal+margin; discount=before*discount_pct/100
+    return {"preparation":preparation,"production":production,"postproduction":postproduction,"creative_cost":creative,"importance_label":importance,"urgency_label":urgency,"urgency_amount":urgency_amount,"base_rights":base_rights,"rights_factor":factor,"calculated_rights":calculated,"rights":rights,"minimum_applied":bool(base_rights and calculated<MINIMUM_RIGHTS),"expenses":expenses,"subtotal_before_margin":subtotal,"margin_pct":margin_pct,"margin_amount":margin,"discount_pct":discount_pct,"discount_amount":discount,"total":max(0,before-discount),"details":details}
 
-IMPORTANCE_OPTIONS = {
-    "Livrable technique ou accessoire · 20 %": 0.20,
-    "Création standard · 40 %": 0.40,
-    "Création centrale · 60 %": 0.60,
-    "Création à forte valeur commerciale · 80 %": 0.80,
-    "Création signature ou stratégique · 100 %": 1.00,
-}
+def build_brief_prompt(b):
+    jobs=", ".join(b.get("professions",[])) or "Non renseignés"
+    return f"""Tu agis comme business manager de prestations créatives. À partir du brief ci-dessous, génère uniquement les questions encore nécessaires. Reste concis : 10 questions prioritaires maximum, puis 8 questions complémentaires maximum. N'invente aucune réponse.
 
-URGENCY_OPTIONS = {
-    "Planning normal · 0 %": 0.00,
-    "Délai resserré · 15 %": 0.15,
-    "Urgent · 30 %": 0.30,
-    "Très urgent · 50 %": 0.50,
-    "Priorité absolue · 75 %": 0.75,
-}
+BRIEF CONNU
+- Client : {b.get('client') or 'Non renseigné'}
+- Projet : {b.get('title') or 'Non renseigné'}
+- Type : {b.get('project_type') or 'Non renseigné'}
+- Nombre de profils : {b.get('profile_count') or 'Non renseigné'}
+- Métiers : {jobs}
+- Cumul de métiers possible : {b.get('multi_role_allowed') or 'Non renseigné'}
+- Dates : démarrage {fmt_date(b.get('start_date'))}, production {fmt_date(b.get('production_date'))}, livraison {fmt_date(b.get('delivery_date'))}
+- Lieu / modalité : {b.get('location') or 'Non renseigné'} / {b.get('work_mode') or 'Non renseigné'}
+- Objectif : {b.get('business_goal') or 'Non renseigné'}
+- Cible : {b.get('target_audience') or 'Non renseignée'}
+- Message : {b.get('key_message') or 'Non renseigné'}
+- Livrables : {b.get('deliverables') or 'Non renseignés'}
+- Style / compétences : {b.get('skills') or 'Non renseignés'}
+- Budget : {budget_summary(b)}
+- Validation / retours : {b.get('approval_process') or 'Non renseigné'} / {b.get('revision_rounds') or 'Non renseigné'}
+- Contraintes : {b.get('constraints') or 'Non renseignées'}
+- Utilisations prévues : {b.get('usage_notes') or 'Non renseignées'}
 
-MINIMUM_RIGHTS = 100.0
+PRIORITÉ ABSOLUE : OBTENIR LES DONNÉES DU SIMULATEUR
+Les questions doivent permettre de renseigner précisément :
+1. Heures de préparation : cadrage, repérage, script, storyboard, réunions, préparation matérielle.
+2. Heures de production : présence, tournage, shooting, création, nombre de profils simultanés.
+3. Heures de postproduction : tri, retouche, montage, étalonnage, son, sous-titrage, déclinaisons.
+4. Importance du rendu : accessoire, standard, central, forte valeur commerciale ou signature.
+5. Urgence : planning normal, resserré, urgent, très urgent ou priorité absolue.
+6. Support exact : interne, site, réseaux organiques, presse, édition, affichage, publicité, packaging.
+7. Diffusion : tirage, vues ou audience attendue.
+8. Territoire : local, France, Europe ou monde.
+9. Durée d'exploitation.
+10. Exclusivité : aucune, sectorielle, territoriale ou totale.
+11. Frais : matériel, studio, déplacements, hébergement, licences et achats externes.
+12. Nombre de retours, fichiers sources, rushes et options.
 
-
-def init_state():
-    defaults = {
-        "briefs": [],
-        "opportunities": [],
-        "last_pricing": None,
-        "last_context": {},
-        "selected_brief_id": None,
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-
-init_state()
-
-
-def euro(value):
-    return f"{float(value or 0):,.2f} €".replace(",", " ").replace(".", ",")
-
-
-def format_date(value):
-    if not value:
-        return "Non renseignée"
-    if isinstance(value, str):
-        return value
-    return value.strftime("%d/%m/%Y")
-
-
-def budget_summary(brief):
-    mode = brief.get("budget_mode", "Budget à confirmer")
-    if mode == "Le client a une enveloppe précise":
-        return f"{mode} : {euro(brief.get('budget_exact', 0))}"
-    if mode == "Le client a une fourchette budgétaire":
-        return f"{mode} : {euro(brief.get('budget_min', 0))} à {euro(brief.get('budget_max', 0))}"
-    return mode
-
-
-def compute_price(
-    preparation_hours,
-    production_hours,
-    postproduction_hours,
-    preparation_rate,
-    production_rate,
-    postproduction_rate,
-    importance_label,
-    urgency_label,
-    selections,
-    expenses,
-    margin_pct,
-    discount_pct,
-):
-    preparation = preparation_hours * preparation_rate
-    production = production_hours * production_rate
-    postproduction = postproduction_hours * postproduction_rate
-    creative_cost = preparation + production + postproduction
-
-    importance_rate = IMPORTANCE_OPTIONS[importance_label]
-    urgency_rate = URGENCY_OPTIONS[urgency_label]
-    base_rights = creative_cost * importance_rate
-    urgency_amount = creative_cost * urgency_rate
-
-    rights_factor = 1.0
-    details = []
-    for criterion, selection in selections.items():
-        index = CRITERION_OPTIONS[criterion].index(selection)
-        coefficient = COEFFICIENTS[criterion][index]
-        rights_factor *= coefficient
-        details.append((criterion, selection, coefficient))
-
-    calculated_rights = base_rights * rights_factor
-    rights = max(MINIMUM_RIGHTS, calculated_rights) if base_rights > 0 else 0.0
-    minimum_applied = base_rights > 0 and calculated_rights < MINIMUM_RIGHTS
-
-    subtotal_before_margin = creative_cost + urgency_amount + rights + expenses
-    margin_amount = subtotal_before_margin * margin_pct / 100
-    before_discount = subtotal_before_margin + margin_amount
-    discount_amount = before_discount * discount_pct / 100
-    total = max(0.0, before_discount - discount_amount)
-
-    return {
-        "preparation": preparation,
-        "production": production,
-        "postproduction": postproduction,
-        "creative_cost": creative_cost,
-        "importance_label": importance_label,
-        "urgency_label": urgency_label,
-        "urgency_amount": urgency_amount,
-        "base_rights": base_rights,
-        "rights_factor": rights_factor,
-        "calculated_rights": calculated_rights,
-        "rights": rights,
-        "minimum_applied": minimum_applied,
-        "expenses": expenses,
-        "subtotal_before_margin": subtotal_before_margin,
-        "margin_pct": margin_pct,
-        "margin_amount": margin_amount,
-        "discount_pct": discount_pct,
-        "discount_amount": discount_amount,
-        "total": total,
-        "details": details,
-    }
-
-
-def build_quote_html(client, project, pricing, notes, validity):
-    rows = "".join(
-        f"<tr><td>{escape(criterion)}</td><td>{escape(choice)}</td><td>{coefficient:.2f}</td></tr>"
-        for criterion, choice, coefficient in pricing["details"]
-    )
-    return f"""<!doctype html><html lang='fr'><head><meta charset='utf-8'>
-<title>Devis {escape(project)}</title><style>
-body{{font-family:Arial,sans-serif;color:#21313D;margin:40px}}h1{{color:#18354A}}
-.box{{background:#EAF7F5;padding:16px;border-radius:10px}}table{{border-collapse:collapse;width:100%;margin:18px 0}}
-th,td{{border:1px solid #DDE6EA;padding:9px;text-align:left}}th{{background:#18354A;color:white}}
-.total{{font-size:22px;color:#0B7E76;font-weight:700}}small{{color:#65727A}}@media print{{body{{margin:15mm}}}}
-</style></head><body><h1>DEVIS INDICATIF</h1>
-<div class='box'><b>Client :</b> {escape(client)}<br><b>Projet :</b> {escape(project)}<br>
-<b>Date :</b> {datetime.now().strftime('%d/%m/%Y')}<br><b>Validité :</b> {validity} jours</div>
-<h2>Détail financier</h2><table><tr><th>Poste</th><th>Montant HT</th></tr>
-<tr><td>Préparation</td><td>{euro(pricing['preparation'])}</td></tr>
-<tr><td>Production</td><td>{euro(pricing['production'])}</td></tr>
-<tr><td>Postproduction</td><td>{euro(pricing['postproduction'])}</td></tr>
-<tr><td>Majoration urgence</td><td>{euro(pricing['urgency_amount'])}</td></tr>
-<tr><td>Droits d'utilisation</td><td>{euro(pricing['rights'])}</td></tr>
-<tr><td>Frais</td><td>{euro(pricing['expenses'])}</td></tr>
-<tr><td>Marge / honoraires ({pricing['margin_pct']:.0f} %)</td><td>{euro(pricing['margin_amount'])}</td></tr>
-<tr><td>Remise</td><td>- {euro(pricing['discount_amount'])}</td></tr></table>
-<p class='total'>Total HT : {euro(pricing['total'])}</p>
-<h2>Paramètres des droits</h2><p><b>Importance du rendu :</b> {escape(pricing['importance_label'])}<br>
-<b>Urgence :</b> {escape(pricing['urgency_label'])}<br><b>Base de droits :</b> {euro(pricing['base_rights'])}</p>
-<table><tr><th>Critère</th><th>Choix</th><th>Coefficient</th></tr>{rows}</table>
-<h2>Notes et conditions</h2><p>{escape(notes).replace(chr(10), '<br>')}</p>
-<small>Document de travail à valider avant envoi. Les coefficients constituent une aide à la tarification.</small>
-</body></html>"""
-
-
-def build_brief_questions_prompt(brief):
-    professions = ", ".join(brief.get("professions", [])) or "Non renseignés"
-    return f"""Tu agis comme directeur de production et business manager spécialisé dans les missions créatives.
-
-OBJECTIF
-À partir des informations déjà connues, produire une liste exhaustive, structurée et priorisée des questions encore nécessaires pour rendre le brief opérationnel, commercial et contractuel. Ne repose pas une question dont la réponse est déjà claire. N'invente aucune réponse.
-
-INFORMATIONS DÉJÀ CONNUES
-- Client : {brief.get('client') or 'Non renseigné'}
-- Contact principal : {brief.get('contact_name') or 'Non renseigné'}
-- Fonction du contact : {brief.get('contact_role') or 'Non renseignée'}
-- Projet : {brief.get('title') or 'Non renseigné'}
-- Type de projet : {brief.get('project_type') or 'Non renseigné'}
-- Nombre de profils recherchés : {brief.get('profile_count') or 'Non renseigné'}
-- Métiers nécessaires : {professions}
-- Un même profil peut-il couvrir plusieurs métiers : {brief.get('multi_role_allowed') or 'Non renseigné'}
-- Démarrage souhaité : {format_date(brief.get('start_date'))}
-- Date de production / intervention : {format_date(brief.get('production_date'))}
-- Date de livraison finale : {format_date(brief.get('delivery_date'))}
-- Budget : {budget_summary(brief)}
-- Lieu : {brief.get('location') or 'Non renseigné'}
-- Télétravail / présence : {brief.get('work_mode') or 'Non renseigné'}
-- Objectif business : {brief.get('business_goal') or 'Non renseigné'}
-- Public cible : {brief.get('target_audience') or 'Non renseigné'}
-- Message principal : {brief.get('key_message') or 'Non renseigné'}
-- Livrables connus : {brief.get('deliverables') or 'Non renseignés'}
-- Compétences / style : {brief.get('skills') or 'Non renseignés'}
-- Références ou inspirations : {brief.get('references') or 'Non renseignées'}
-- Contraintes connues : {brief.get('constraints') or 'Non renseignées'}
-- Matériel / ressources fournis par le client : {brief.get('client_inputs') or 'Non renseignés'}
-- Processus de validation : {brief.get('approval_process') or 'Non renseigné'}
-- Nombre de retours souhaité : {brief.get('revision_rounds') or 'Non renseigné'}
-- Utilisations envisagées : {brief.get('usage_notes') or 'Non renseignées'}
-- Informations complémentaires : {brief.get('description') or 'Non renseignées'}
-
-TRAITEMENT SPÉCIFIQUE DU BUDGET
-- Si le client attend notre estimation, ne lui demande pas immédiatement « quel est votre budget ? ».
-- Pose plutôt des questions permettant le chiffrage : niveau d'ambition, livrables indispensables et optionnels, volume, qualité attendue, planning, nombre de profils, matériel, déplacements, postproduction, retours et droits d'utilisation.
-- Propose ensuite trois scénarios à chiffrer : essentiel, recommandé et premium.
-- Si le client a une enveloppe ou une fourchette, vérifie ce qu'elle inclut : production, talents, matériel, frais, droits, marge, taxes et achat média.
-
-RUBRIQUES À COUVRIR
-1. Contexte, objectifs business et critères de réussite.
-2. Cible, message, ton et action attendue du public.
-3. Composition de l'équipe : nombre de profils, rôles, cumul de fonctions, séniorité et disponibilités.
-4. Livrables : quantité, formats, dimensions, durée, langues, déclinaisons, fichiers sources et rushes.
-5. Préparation : réunion de cadrage, repérage, script, storyboard, casting, planning, stylisme, maquillage, accessoires.
-6. Production : dates, horaires, lieu, accès, autorisations, sécurité, matériel, équipe client, logistique et météo.
-7. Postproduction : montage, retouche, étalonnage, sous-titrage, son, versions, archivage et livraison.
-8. Planning : jalons, dépendances, validation, urgence réelle et conséquences des retards imputables au client.
-9. Gouvernance : contact opérationnel, décideur final, approbateurs, consolidation des retours et délai d'acceptation.
-10. Révisions : nombre d'allers-retours, corrections incluses, changement de brief et procédure de chiffrage complémentaire.
-11. Budget et estimation : hypothèses, inclusions, exclusions, options, acompte, facturation et délai de paiement.
-12. Droits : supports, finalités, diffusion, tirage, audience, territoire, durée, exclusivité, adaptation, modification et partenaires.
-13. Droits de tiers : droit à l'image, lieux, marques, musiques, œuvres, licences et personne responsable des autorisations.
-14. Portfolio, crédit, confidentialité, embargo et date de communication.
-15. Annulation, report, force majeure, météo, frais engagés et indemnité d'immobilisation.
-16. Contrat : documents applicables, ordre de priorité, responsabilité, assurance, propriété des sources, résiliation et juridiction.
-17. Éléments fournis par le client : charte, logos, textes, produits, accès, données, plans, contacts et dates de remise.
-18. Accessibilité, conformité, RSE, sécurité, RGPD et exigences spécifiques au secteur.
-
-FORMAT ATTENDU
-A. Les 15 questions indispensables à poser en priorité.
-B. Les questions complémentaires, classées par rubrique.
-C. Les questions spécifiques au métier ou aux métiers sélectionnés.
-D. Les pièces et accès à demander avant devis.
-E. Les hypothèses nécessaires pour produire une estimation si le budget est inconnu.
-F. Trois scénarios de cadrage à chiffrer : essentiel, recommandé et premium, sans inventer de prix.
-G. Les zones de risque et les informations bloquantes avant engagement.
-"""
-
-
-def build_contract_prompt(context):
-    pricing = context.get("pricing", {})
-    selections = context.get("selections", {})
-    rights_lines = "\n".join(f"- {key} : {value}" for key, value in selections.items())
-    return f"""Tu agis comme assistant de revue contractuelle pour une prestation créative en France.
-
-OBJECTIF
-Comparer le contrat reçu avec les paramètres commerciaux convenus. Identifier les clauses conformes, absentes, ambiguës, plus larges que prévu ou défavorables au prestataire. Cite les passages pertinents et leurs articles. N'invente rien.
-
-IMPORTANT
-Cette analyse est une aide opérationnelle et ne remplace pas un avis juridique. Distingue les faits, risques et recommandations.
-
-PARAMÈTRES COMMERCIAUX
-- Importance du rendu : {context.get('importance')}
-- Urgence : {context.get('urgency')}
-- Préparation : {euro(pricing.get('preparation'))}
-- Production : {euro(pricing.get('production'))}
-- Postproduction : {euro(pricing.get('postproduction'))}
-- Majoration urgence : {euro(pricing.get('urgency_amount'))}
-- Base de droits : {euro(pricing.get('base_rights'))}
-- Droits facturés : {euro(pricing.get('rights'))}
-- Frais : {euro(pricing.get('expenses'))}
-- Marge / honoraires : {euro(pricing.get('margin_amount'))}
-- Remise : {euro(pricing.get('discount_amount'))}
-- Total HT : {euro(pricing.get('total'))}
-
-PÉRIMÈTRE DES DROITS
-{rights_lines}
-
-CONTRÔLES OBLIGATOIRES
-Identité des parties, périmètre, nombre de profils, rôles cumulés, livrables, dates, planning, urgence, prix, acompte, paiement, retours, acceptation, supports, diffusion, territoire, durée, exclusivité, adaptation, traduction, sous-licence, rétrocession, condition de paiement complet, crédit, droit moral, droit à l'image, droits de tiers, annulation, report, responsabilité, assurance, confidentialité, portfolio, fichiers sources, sous-traitance, résiliation, droit applicable, juridiction et ordre de priorité des documents.
+TRAITEMENT DU BUDGET
+Si le client attend notre estimation, ne lui demande pas un chiffre arbitraire. Pose les questions de périmètre ci-dessus et identifie les hypothèses de chiffrage. Si une enveloppe existe, vérifie ce qu'elle inclut.
 
 FORMAT
-1. Résumé exécutif.
-2. Tableau : Critère | Attendu | Clause trouvée | Statut | Risque | Action.
-3. Clauses à négocier.
-4. Rédactions correctives.
-5. Questions avant signature.
-6. Conclusion : signer, clarifier, négocier ou transmettre à un professionnel du droit.
-
-CONTRAT À ANALYSER
-COLLER ICI LE TEXTE INTÉGRAL DU CONTRAT
+A. 10 questions prioritaires maximum, formulées naturellement pour un rendez-vous client.
+B. 8 questions complémentaires maximum.
+C. Tableau « Donnée du simulateur | Réponse connue | Information manquante ».
+D. Hypothèses provisoires nécessaires à une estimation automatique.
+E. Points bloquants avant devis.
 """
 
+def build_contract_prompt(ctx):
+    p=ctx.get("pricing",{}); selections=ctx.get("selections",{}); lines="\n".join(f"- {k} : {v}" for k,v in selections.items())
+    return f"""Tu agis comme assistant de revue contractuelle pour une prestation créative en France. Compare le contrat avec les paramètres ci-dessous. Cite les clauses pertinentes. Distingue faits, risques et recommandations. Cette analyse ne remplace pas un avis juridique.
 
-st.markdown(
-    "<div class='hero'><h1>🎨 Manager business de créatifs</h1>"
-    "<p>Qualification complète, estimation, devis et sécurisation contractuelle.</p></div>",
-    unsafe_allow_html=True,
-)
+PARAMÈTRES
+- Importance : {ctx.get('importance')}
+- Urgence : {ctx.get('urgency')}
+- Préparation : {euro(p.get('preparation'))}
+- Production : {euro(p.get('production'))}
+- Postproduction : {euro(p.get('postproduction'))}
+- Majoration urgence : {euro(p.get('urgency_amount'))}
+- Base de droits : {euro(p.get('base_rights'))}
+- Droits : {euro(p.get('rights'))}
+- Frais : {euro(p.get('expenses'))}
+- Marge : {euro(p.get('margin_amount'))}
+- Total HT : {euro(p.get('total'))}
 
-tabs = st.tabs(["Briefs", "Simulateur", "Devis", "Suivi", "Analyse contrat IA", "Sauvegarde"])
+DROITS CONVENUS
+{lines}
+
+CONTRÔLE : parties, périmètre, profils, livrables, dates, retours, acceptation, prix, paiement, droits, adaptation, sous-licence, crédit, droit moral, droit à l'image, tiers, annulation, responsabilité, confidentialité, portfolio, sources, résiliation et juridiction.
+
+FORMAT : résumé, tableau des écarts, clauses à négocier, rédactions correctives, questions avant signature et conclusion.
+
+CONTRAT À ANALYSER
+COLLER ICI LE CONTRAT
+"""
+
+def quote_html(client,project,p,notes,validity):
+    rows="".join(f"<tr><td>{escape(c)}</td><td>{escape(v)}</td><td>{coef:.2f}</td></tr>" for c,v,coef in p["details"])
+    return f"""<!doctype html><html lang='fr'><head><meta charset='utf-8'><style>body{{font-family:Arial;color:#21313D;margin:40px}}table{{border-collapse:collapse;width:100%;margin:16px 0}}th,td{{border:1px solid #CCD6DA;padding:9px}}th{{background:#18354A;color:white}}.total{{font-size:22px;font-weight:bold;color:#0B7E76}}</style></head><body><h1>DEVIS INDICATIF</h1><p><b>Client :</b> {escape(client)}<br><b>Projet :</b> {escape(project)}<br><b>Date :</b> {datetime.now().strftime('%d/%m/%Y')}<br><b>Validité :</b> {validity} jours</p><table><tr><th>Poste</th><th>Montant HT</th></tr><tr><td>Préparation</td><td>{euro(p['preparation'])}</td></tr><tr><td>Production</td><td>{euro(p['production'])}</td></tr><tr><td>Postproduction</td><td>{euro(p['postproduction'])}</td></tr><tr><td>Urgence</td><td>{euro(p['urgency_amount'])}</td></tr><tr><td>Droits</td><td>{euro(p['rights'])}</td></tr><tr><td>Frais</td><td>{euro(p['expenses'])}</td></tr><tr><td>Marge</td><td>{euro(p['margin_amount'])}</td></tr><tr><td>Remise</td><td>- {euro(p['discount_amount'])}</td></tr></table><p class='total'>Total HT : {euro(p['total'])}</p><h2>Paramètres des droits</h2><table><tr><th>Critère</th><th>Choix</th><th>Coefficient</th></tr>{rows}</table><h2>Notes</h2><p>{escape(notes).replace(chr(10),'<br>')}</p></body></html>"""
+
+st.markdown("<div class='hero'><h1>🎨 Manager business de créatifs</h1><p>Qualification, estimation automatique, devis et sécurisation contractuelle.</p></div>",unsafe_allow_html=True)
+tabs=st.tabs(["Briefs","Simulateur","Devis","Suivi","Analyse contrat IA","Sauvegarde"])
 
 with tabs[0]:
     st.header("Briefs de mission")
-    with st.form("brief_form", clear_on_submit=True):
-        st.subheader("1. Identification")
-        c1, c2, c3 = st.columns(3)
-        client = c1.text_input("Client *")
-        contact_name = c2.text_input("Contact principal")
-        contact_role = c3.text_input("Fonction du contact")
-        title = c1.text_input("Nom du projet *")
-        project_type = c2.selectbox(
-            "Type de projet",
-            ["À préciser", "Photo", "Vidéo", "Graphisme", "Motion design", "Contenu social", "Événement", "Campagne", "Autre"],
-        )
-        profile_count = c3.number_input("Nombre de profils recherchés", min_value=1, value=1, step=1)
-        professions = st.multiselect("Métier(s) nécessaire(s)", PROFESSIONS)
-        multi_role_allowed = st.radio(
-            "Un même profil peut-il couvrir plusieurs métiers ?",
-            ["Oui", "Non", "À confirmer"],
-            horizontal=True,
-        )
-
-        st.subheader("2. Dates et organisation")
-        c1, c2, c3 = st.columns(3)
-        start_date_known = c1.checkbox("Date de démarrage connue")
-        production_date_known = c2.checkbox("Date de production connue")
-        delivery_date_known = c3.checkbox("Date de livraison connue")
-        start_date = c1.date_input("Démarrage souhaité", value=date.today()) if start_date_known else None
-        production_date = c2.date_input("Production / intervention", value=date.today()) if production_date_known else None
-        delivery_date = c3.date_input("Livraison finale", value=date.today()) if delivery_date_known else None
-        c1, c2, c3 = st.columns(3)
-        location = c1.text_input("Lieu / zone")
-        work_mode = c2.selectbox("Modalité", ["Sur site", "À distance", "Hybride", "À confirmer"])
-        urgency_known = c3.selectbox("Niveau d'urgence perçu", ["Normal", "Resserré", "Urgent", "Très urgent", "À confirmer"])
-
-        st.subheader("3. Besoin et résultat attendu")
-        business_goal = st.text_area("Objectif business ou communication")
-        target_audience = st.text_area("Public cible")
-        key_message = st.text_area("Message principal / action attendue")
-        deliverables = st.text_area("Livrables déjà identifiés")
-        skills = st.text_area("Compétences, style, logiciels ou expérience nécessaires")
-        references = st.text_area("Références, inspirations et contre-exemples")
-
-        st.subheader("4. Budget")
-        budget_mode = st.selectbox("Situation budgétaire", BUDGET_MODES)
-        c1, c2 = st.columns(2)
-        budget_exact = 0.0
-        budget_min = 0.0
-        budget_max = 0.0
-        if budget_mode == "Le client a une enveloppe précise":
-            budget_exact = c1.number_input("Enveloppe précise HT (€)", min_value=0.0, step=100.0)
-        elif budget_mode == "Le client a une fourchette budgétaire":
-            budget_min = c1.number_input("Budget minimum HT (€)", min_value=0.0, step=100.0)
-            budget_max = c2.number_input("Budget maximum HT (€)", min_value=0.0, step=100.0)
-        elif budget_mode == "Le client attend notre estimation":
-            st.info("Le prompt de qualification demandera les hypothèses nécessaires pour construire des scénarios essentiel, recommandé et premium.")
-        budget_includes = st.multiselect(
-            "Ce que le budget semble inclure",
-            ["Préparation", "Production", "Postproduction", "Talents", "Matériel", "Déplacements", "Droits", "Marge", "Taxes", "Achat média", "À confirmer"],
-        )
-
-        st.subheader("5. Validation, contraintes et droits")
-        c1, c2 = st.columns(2)
-        approval_process = c1.text_area("Décideur final et processus de validation")
-        revision_rounds = c2.selectbox("Nombre d'allers-retours envisagé", ["À confirmer", "1", "2", "3", "Plus de 3"])
-        constraints = c1.text_area("Contraintes techniques, légales, sécurité, RSE ou accessibilité")
-        client_inputs = c2.text_area("Éléments et ressources fournis par le client")
-        usage_notes = st.text_area("Utilisations, supports, diffusion, territoire, durée et exclusivité déjà envisagés")
-        description = st.text_area("Informations complémentaires")
-
+    with st.form("brief_form",clear_on_submit=True):
+        st.subheader("Identification et équipe")
+        c1,c2,c3=st.columns(3)
+        client=c1.text_input("Client *"); contact_name=c2.text_input("Contact principal"); contact_role=c3.text_input("Fonction du contact")
+        title=c1.text_input("Nom du projet *"); project_type=c2.selectbox("Type de projet",["À préciser","Photo","Vidéo","Graphisme","Motion design","Contenu social","Événement","Campagne","Autre"]); profile_count=c3.number_input("Nombre de profils recherchés",min_value=1,value=1,step=1)
+        professions=st.multiselect("Métier(s) nécessaires",PROFESSIONS); multi_role=st.radio("Un même profil peut-il couvrir plusieurs métiers ?",["Oui","Non","À confirmer"],horizontal=True)
+        st.subheader("Dates et organisation")
+        c1,c2,c3=st.columns(3); sk=c1.checkbox("Démarrage connu"); pk=c2.checkbox("Production connue"); dk=c3.checkbox("Livraison connue")
+        start=c1.date_input("Démarrage",value=date.today()) if sk else None; prod_date=c2.date_input("Production",value=date.today()) if pk else None; delivery=c3.date_input("Livraison",value=date.today()) if dk else None
+        c1,c2,c3=st.columns(3); location=c1.text_input("Lieu / zone"); work_mode=c2.selectbox("Modalité",["Sur site","À distance","Hybride","À confirmer"]); urgency_known=c3.selectbox("Urgence perçue",["Normal","Resserré","Urgent","Très urgent","À confirmer"])
+        st.subheader("Besoin")
+        business_goal=st.text_area("Objectif business ou communication"); target=st.text_area("Public cible"); message=st.text_area("Message principal / action attendue"); deliverables=st.text_area("Livrables déjà identifiés"); skills=st.text_area("Style, compétences, logiciels ou expérience"); references=st.text_area("Références et contre-exemples")
+        st.subheader("Budget")
+        budget_mode=st.selectbox("Situation budgétaire",BUDGET_MODES); c1,c2=st.columns(2); exact=minimum=maximum=0.0
+        if budget_mode==BUDGET_MODES[0]: exact=c1.number_input("Enveloppe précise HT",min_value=0.0,step=100.0)
+        elif budget_mode==BUDGET_MODES[1]: minimum=c1.number_input("Minimum HT",min_value=0.0,step=100.0); maximum=c2.number_input("Maximum HT",min_value=0.0,step=100.0)
+        elif budget_mode==BUDGET_MODES[2]: st.info("L'outil produira une première estimation automatique à partir du brief et affichera ses hypothèses.")
+        budget_includes=st.multiselect("Ce que le budget semble inclure",["Préparation","Production","Postproduction","Talents","Matériel","Déplacements","Droits","Marge","Taxes","Achat média","À confirmer"])
+        st.subheader("Validation, contraintes et droits")
+        c1,c2=st.columns(2); approval=c1.text_area("Décideur final et validation"); revisions=c2.selectbox("Allers-retours envisagés",["À confirmer","1","2","3","Plus de 3"]); constraints=c1.text_area("Contraintes techniques, légales, sécurité, RSE ou accessibilité"); client_inputs=c2.text_area("Éléments fournis par le client")
+        usage=st.text_area("Utilisations, supports, diffusion, territoire, durée et exclusivité déjà envisagés"); description=st.text_area("Informations complémentaires")
         if st.form_submit_button("Créer le brief"):
-            if not client or not title:
-                st.error("Le client et le nom du projet sont obligatoires.")
-            elif budget_mode == "Le client a une fourchette budgétaire" and budget_max and budget_min > budget_max:
-                st.error("Le budget minimum ne peut pas dépasser le budget maximum.")
+            if not client or not title: st.error("Le client et le projet sont obligatoires.")
+            elif budget_mode==BUDGET_MODES[1] and maximum and minimum>maximum: st.error("Le minimum dépasse le maximum.")
             else:
-                brief = {
-                    "id": datetime.now().timestamp(),
-                    "client": client,
-                    "contact_name": contact_name,
-                    "contact_role": contact_role,
-                    "title": title,
-                    "project_type": project_type,
-                    "profile_count": int(profile_count),
-                    "professions": professions,
-                    "multi_role_allowed": multi_role_allowed,
-                    "start_date": start_date.isoformat() if start_date else None,
-                    "production_date": production_date.isoformat() if production_date else None,
-                    "delivery_date": delivery_date.isoformat() if delivery_date else None,
-                    "location": location,
-                    "work_mode": work_mode,
-                    "urgency_known": urgency_known,
-                    "business_goal": business_goal,
-                    "target_audience": target_audience,
-                    "key_message": key_message,
-                    "deliverables": deliverables,
-                    "skills": skills,
-                    "references": references,
-                    "budget_mode": budget_mode,
-                    "budget_exact": budget_exact,
-                    "budget_min": budget_min,
-                    "budget_max": budget_max,
-                    "budget_includes": budget_includes,
-                    "approval_process": approval_process,
-                    "revision_rounds": revision_rounds,
-                    "constraints": constraints,
-                    "client_inputs": client_inputs,
-                    "usage_notes": usage_notes,
-                    "description": description,
-                }
-                st.session_state.briefs.append(brief)
-                st.session_state.selected_brief_id = brief["id"]
-                st.success("Brief créé.")
-
+                st.session_state.briefs.append({"id":datetime.now().timestamp(),"client":client,"contact_name":contact_name,"contact_role":contact_role,"title":title,"project_type":project_type,"profile_count":int(profile_count),"professions":professions,"multi_role_allowed":multi_role,"start_date":start.isoformat() if start else None,"production_date":prod_date.isoformat() if prod_date else None,"delivery_date":delivery.isoformat() if delivery else None,"location":location,"work_mode":work_mode,"urgency_known":urgency_known,"business_goal":business_goal,"target_audience":target,"key_message":message,"deliverables":deliverables,"skills":skills,"references":references,"budget_mode":budget_mode,"budget_exact":exact,"budget_min":minimum,"budget_max":maximum,"budget_includes":budget_includes,"approval_process":approval,"revision_rounds":revisions,"constraints":constraints,"client_inputs":client_inputs,"usage_notes":usage,"description":description}); st.success("Brief créé.")
     if st.session_state.briefs:
-        st.subheader("Briefs enregistrés")
-        for index, brief in enumerate(st.session_state.briefs):
-            with st.expander(f"{brief['client']} · {brief['title']} · {brief.get('profile_count', 1)} profil(s)"):
-                st.write("**Dates :**", format_date(brief.get("start_date")), "|", format_date(brief.get("production_date")), "|", format_date(brief.get("delivery_date")))
-                st.write("**Budget :**", budget_summary(brief))
-                st.write("**Métiers :**", ", ".join(brief.get("professions", [])) or "Non renseignés")
-                st.write("**Livrables :**", brief.get("deliverables") or "Non renseignés")
-                if st.button("Supprimer", key=f"delete_brief_{index}"):
-                    st.session_state.briefs.pop(index)
-                    st.rerun()
-
-        st.divider()
-        st.subheader("Prompt IA pour préparer toutes les questions client")
-        brief_index = st.selectbox(
-            "Brief à approfondir",
-            range(len(st.session_state.briefs)),
-            format_func=lambda i: f"{st.session_state.briefs[i]['client']} · {st.session_state.briefs[i]['title']}",
-        )
-        selected_brief = st.session_state.briefs[brief_index]
-        brief_prompt = build_brief_questions_prompt(selected_brief)
-        st.text_area("Prompt prêt à copier", value=brief_prompt, height=650)
-        st.download_button("Télécharger le prompt de qualification", brief_prompt, "prompt_questions_brief_client.txt", "text/plain")
-    else:
-        st.info("Crée un brief pour générer automatiquement le questionnaire client.")
+        for i,b in enumerate(st.session_state.briefs):
+            with st.expander(f"{b['client']} · {b['title']} · {b.get('profile_count',1)} profil(s)"):
+                st.write("**Budget :**",budget_summary(b)); st.write("**Métiers :**",", ".join(b.get("professions",[])) or "Non renseignés"); st.write("**Dates :**",fmt_date(b.get("start_date")),"|",fmt_date(b.get("production_date")),"|",fmt_date(b.get("delivery_date")))
+                if st.button("Supprimer",key=f"db{i}"): st.session_state.briefs.pop(i); st.rerun()
+        st.divider(); st.subheader("Prompt IA de qualification ciblé")
+        bi=st.selectbox("Brief à approfondir",range(len(st.session_state.briefs)),format_func=lambda i:f"{st.session_state.briefs[i]['client']} · {st.session_state.briefs[i]['title']}"); prompt=build_brief_prompt(st.session_state.briefs[bi]); st.text_area("Prompt prêt à copier",value=prompt,height=600); st.download_button("Télécharger le prompt",prompt,"prompt_qualification_brief.txt","text/plain")
 
 with tabs[1]:
-    st.header("Simulateur de tarification")
-
-    selected_brief = None
+    st.header("Simulateur et estimation automatique")
+    brief=None; estimate=None
     if st.session_state.briefs:
-        brief_idx = st.selectbox(
-            "Brief associé à l'estimation",
-            range(len(st.session_state.briefs)),
-            format_func=lambda i: f"{st.session_state.briefs[i]['client']} · {st.session_state.briefs[i]['title']}",
-        )
-        selected_brief = st.session_state.briefs[brief_idx]
-        st.info(f"Situation budgétaire du client : {budget_summary(selected_brief)}")
-
-    st.subheader("Temps de travail")
-    c1, c2, c3 = st.columns(3)
-    preparation_hours = c1.number_input("Heures de préparation", min_value=0.0, value=2.0, step=0.5)
-    production_hours = c2.number_input("Heures de production", min_value=0.0, value=8.0, step=0.5)
-    postproduction_hours = c3.number_input("Heures de postproduction", min_value=0.0, value=3.0, step=0.5)
-    c1, c2, c3 = st.columns(3)
-    preparation_rate = c1.number_input("Tarif préparation / heure HT (€)", min_value=0.0, value=50.0, step=10.0)
-    production_rate = c2.number_input("Tarif production / heure HT (€)", min_value=0.0, value=75.0, step=10.0)
-    postproduction_rate = c3.number_input("Tarif postproduction / heure HT (€)", min_value=0.0, value=60.0, step=10.0)
-
-    st.subheader("Valeur du rendu et urgence")
-    importance_label = st.select_slider("Importance intrinsèque du rendu", options=list(IMPORTANCE_OPTIONS.keys()), value="Création centrale · 60 %")
-    urgency_label = st.select_slider("Niveau d'urgence", options=list(URGENCY_OPTIONS.keys()), value="Planning normal · 0 %")
-
-    st.subheader("Étendue des droits d'utilisation")
-    selections = {}
-    for criterion, options in CRITERION_OPTIONS.items():
-        selection = st.select_slider(criterion, options=options, value=options[len(options) // 2], key=f"slider_{criterion}")
-        selections[criterion] = selection
-        index = options.index(selection)
-        st.caption(f"Choix retenu : {selection} · coefficient {COEFFICIENTS[criterion][index]:.2f}")
-
-    st.subheader("Frais et ajustements")
-    c1, c2, c3 = st.columns(3)
-    expenses = c1.number_input("Frais techniques et déplacements HT (€)", min_value=0.0, value=0.0, step=25.0)
-    margin_pct = c2.number_input("Marge / honoraires (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0)
-    discount_pct = c3.number_input("Remise commerciale (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-
-    pricing = compute_price(
-        preparation_hours, production_hours, postproduction_hours,
-        preparation_rate, production_rate, postproduction_rate,
-        importance_label, urgency_label, selections, expenses, margin_pct, discount_pct,
-    )
-    st.session_state.last_pricing = pricing
-    st.session_state.last_context = {
-        "importance": importance_label,
-        "urgency": urgency_label,
-        "selections": selections,
-        "pricing": pricing,
-        "brief": selected_brief,
-    }
-
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("Coût créatif", euro(pricing["creative_cost"]))
-    m2.metric("Base de droits", euro(pricing["base_rights"]))
-    m3.metric("Urgence", euro(pricing["urgency_amount"]))
-    m4.metric("Droits", euro(pricing["rights"]))
-    m5.metric("Marge", euro(pricing["margin_amount"]), f"{pricing['margin_pct']:.0f} %")
-    m6.metric("Total HT", euro(pricing["total"]))
-
-    st.markdown(
-        f"""<div class='card'><b>Détail de la marge</b><br>
-        Assiette avant marge : {euro(pricing['subtotal_before_margin'])}<br>
-        Taux : {pricing['margin_pct']:.0f} %<br>
-        <b>Montant de la marge : {euro(pricing['margin_amount'])}</b></div>""",
-        unsafe_allow_html=True,
-    )
-
-    if selected_brief:
-        mode = selected_brief.get("budget_mode")
-        if mode == "Le client a une enveloppe précise" and selected_brief.get("budget_exact", 0):
-            gap = selected_brief["budget_exact"] - pricing["total"]
-            st.success(f"Estimation sous l'enveloppe de {euro(gap)}") if gap >= 0 else st.error(f"Estimation au-dessus de l'enveloppe de {euro(abs(gap))}")
-        elif mode == "Le client a une fourchette budgétaire" and selected_brief.get("budget_max", 0):
-            if pricing["total"] < selected_brief.get("budget_min", 0):
-                st.info("L'estimation est sous la fourchette annoncée. Vérifie que tout le périmètre est inclus.")
-            elif pricing["total"] <= selected_brief.get("budget_max", 0):
-                st.success("L'estimation se situe dans la fourchette du client.")
-            else:
-                st.error(f"L'estimation dépasse le maximum de {euro(pricing['total'] - selected_brief['budget_max'])}.")
-        elif mode == "Le client attend notre estimation":
-            st.info("Cette estimation constitue la proposition de référence à présenter au client avec les hypothèses retenues.")
-
-    if pricing["minimum_applied"]:
-        st.info(f"Le minimum de droits de {euro(MINIMUM_RIGHTS)} a été appliqué.")
+        bi=st.selectbox("Brief associé",range(len(st.session_state.briefs)),format_func=lambda i:f"{st.session_state.briefs[i]['client']} · {st.session_state.briefs[i]['title']}"); brief=st.session_state.briefs[bi]; estimate=auto_estimate(brief); use_auto=st.checkbox("Utiliser l'estimation automatique comme point de départ",value=True)
+        st.info("Estimation indicative fondée sur un abaque interne. Elle doit être ajustée avec les réponses client.")
+        with st.expander("Voir les hypothèses automatiques",expanded=True):
+            st.write("Préparation :",estimate["preparation_hours"],"h | Production :",estimate["production_hours"],"h | Postproduction :",estimate["postproduction_hours"],"h"); st.write("Importance :",estimate["importance"],"| Urgence :",estimate["urgency"]); st.write("Hypothèses :"); [st.write("•",x) for x in estimate["assumptions"]]
+    else: use_auto=False
+    d=estimate if (estimate and use_auto) else {"preparation_hours":2.0,"production_hours":8.0,"postproduction_hours":3.0,"preparation_rate":50.0,"production_rate":75.0,"postproduction_rate":60.0,"importance":"Création centrale · 60 %","urgency":"Planning normal · 0 %"}
+    st.subheader("Temps et taux")
+    c1,c2,c3=st.columns(3); ph=c1.number_input("Heures de préparation",min_value=0.0,value=float(d["preparation_hours"]),step=.5,key=f"ph_{brief.get('id') if brief else 'x'}_{use_auto}"); prh=c2.number_input("Heures de production",min_value=0.0,value=float(d["production_hours"]),step=.5,key=f"prh_{brief.get('id') if brief else 'x'}_{use_auto}"); poh=c3.number_input("Heures de postproduction",min_value=0.0,value=float(d["postproduction_hours"]),step=.5,key=f"poh_{brief.get('id') if brief else 'x'}_{use_auto}")
+    c1,c2,c3=st.columns(3); pr=c1.number_input("Tarif préparation / h HT",min_value=0.0,value=float(d["preparation_rate"]),step=10.0); rr=c2.number_input("Tarif production / h HT",min_value=0.0,value=float(d["production_rate"]),step=10.0); por=c3.number_input("Tarif postproduction / h HT",min_value=0.0,value=float(d["postproduction_rate"]),step=10.0)
+    st.subheader("Valeur, urgence et droits"); importance=st.select_slider("Importance du rendu",options=list(IMPORTANCE_OPTIONS),value=d["importance"],key=f"imp_{brief.get('id') if brief else 'x'}_{use_auto}"); urgency=st.select_slider("Urgence",options=list(URGENCY_OPTIONS),value=d["urgency"],key=f"urg_{brief.get('id') if brief else 'x'}_{use_auto}")
+    selections={}
+    for criterion,options in CRITERION_OPTIONS.items(): selections[criterion]=st.select_slider(criterion,options=options,value=options[len(options)//2],key=f"{criterion}_{brief.get('id') if brief else 'x'}")
+    st.subheader("Frais et ajustements"); c1,c2,c3=st.columns(3); expenses=c1.number_input("Frais HT",min_value=0.0,step=25.0); margin_pct=c2.number_input("Marge / honoraires %",min_value=0.0,max_value=100.0,value=10.0); discount_pct=c3.number_input("Remise %",min_value=0.0,max_value=100.0)
+    p=compute_price(ph,prh,poh,pr,rr,por,importance,urgency,selections,expenses,margin_pct,discount_pct); st.session_state.last_pricing=p; st.session_state.last_context={"importance":importance,"urgency":urgency,"selections":selections,"pricing":p,"brief":brief}
+    m1,m2,m3,m4,m5,m6=st.columns(6); m1.metric("Coût créatif",euro(p["creative_cost"])); m2.metric("Base droits",euro(p["base_rights"])); m3.metric("Urgence",euro(p["urgency_amount"])); m4.metric("Droits",euro(p["rights"])); m5.metric("Marge",euro(p["margin_amount"]),f"{p['margin_pct']:.0f} %"); m6.metric("Total HT",euro(p["total"]))
+    st.markdown(f"<div class='card'><b>Marge</b><br>Assiette : {euro(p['subtotal_before_margin'])}<br>Taux : {p['margin_pct']:.0f} %<br><b>Montant : {euro(p['margin_amount'])}</b></div>",unsafe_allow_html=True)
+    if brief:
+        mode=brief.get("budget_mode")
+        if mode==BUDGET_MODES[0] and brief.get("budget_exact"): gap=brief["budget_exact"]-p["total"]; st.success(f"Sous budget de {euro(gap)}") if gap>=0 else st.error(f"Dépassement de {euro(abs(gap))}")
+        elif mode==BUDGET_MODES[1] and brief.get("budget_max"): st.success("Dans la fourchette client.") if brief.get("budget_min",0)<=p["total"]<=brief["budget_max"] else st.warning("Estimation hors fourchette client.")
+        elif mode==BUDGET_MODES[2]: st.info("Cette estimation constitue un premier scénario recommandé. Présente les hypothèses au client avant engagement.")
+    if p["minimum_applied"]: st.info(f"Minimum de droits appliqué : {euro(MINIMUM_RIGHTS)}")
 
 with tabs[2]:
-    st.header("Générer un devis")
-    pricing = st.session_state.last_pricing
-    if not pricing:
-        st.info("Calcule d'abord un tarif dans le simulateur.")
+    st.header("Devis"); p=st.session_state.last_pricing
+    if not p: st.info("Calcule d'abord une estimation.")
     else:
-        linked_brief = st.session_state.last_context.get("brief") or {}
-        client = st.text_input("Client", value=linked_brief.get("client", ""), key="quote_client")
-        project = st.text_input("Projet", value=linked_brief.get("title", ""), key="quote_project")
-        validity = st.number_input("Validité du devis en jours", min_value=1, value=30)
-        notes = st.text_area("Notes / conditions", value="Acompte, planning, livrables, retours et périmètre des droits à confirmer avant démarrage.")
-        quote_html = build_quote_html(client, project, pricing, notes, validity)
-        filename = re.sub(r"[^a-zA-Z0-9]+", "_", project or "projet").strip("_")
-        st.download_button("Télécharger le devis HTML", quote_html.encode("utf-8"), file_name=f"devis_{filename}.html", mime="text/html")
-        st.caption("Ouvre le fichier dans un navigateur puis utilise Imprimer → Enregistrer au format PDF.")
-
+        b=st.session_state.last_context.get("brief") or {}; client=st.text_input("Client",value=b.get("client","")); project=st.text_input("Projet",value=b.get("title","")); validity=st.number_input("Validité jours",min_value=1,value=30); notes=st.text_area("Notes",value="Acompte, planning, livrables, retours et droits à confirmer."); html=quote_html(client,project,p,notes,validity); filename=re.sub(r"[^a-zA-Z0-9]+","_",project or "projet"); st.download_button("Télécharger le devis HTML",html.encode(),f"devis_{filename}.html","text/html")
 with tabs[3]:
-    st.header("Suivi des opportunités")
-    with st.form("opportunity_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        opp_client = c1.text_input("Client")
-        opp_project = c2.text_input("Projet")
-        opp_status = c3.selectbox("Statut", ["À qualifier", "Estimation à préparer", "Devis envoyé", "Relance", "Gagné", "Perdu"])
-        opp_amount = c1.number_input("Montant HT (€)", min_value=0.0, step=100.0)
-        opp_next = c2.text_input("Prochaine action")
-        opp_notes = c3.text_input("Notes")
-        if st.form_submit_button("Ajouter au suivi"):
-            st.session_state.opportunities.append({"client": opp_client, "project": opp_project, "status": opp_status, "amount": opp_amount, "next_action": opp_next, "notes": opp_notes})
-            st.success("Opportunité ajoutée.")
-    st.dataframe(st.session_state.opportunities, use_container_width=True, hide_index=True)
-
+    st.header("Suivi")
+    with st.form("opp",clear_on_submit=True):
+        c1,c2,c3=st.columns(3); oc=c1.text_input("Client"); op=c2.text_input("Projet"); os=c3.selectbox("Statut",["À qualifier","Estimation à préparer","Devis envoyé","Relance","Gagné","Perdu"]); oa=c1.number_input("Montant HT",min_value=0.0); on=c2.text_input("Prochaine action"); note=c3.text_input("Notes")
+        if st.form_submit_button("Ajouter"): st.session_state.opportunities.append({"client":oc,"project":op,"status":os,"amount":oa,"next_action":on,"notes":note})
+    st.dataframe(st.session_state.opportunities,use_container_width=True,hide_index=True)
 with tabs[4]:
-    st.header("Prompt d'analyse du contrat avec une IA")
-    st.warning("Ce prompt aide à repérer les écarts. Il ne remplace pas un avis juridique.")
-    if not st.session_state.last_context:
-        st.info("Effectue d'abord une simulation tarifaire.")
-    else:
-        contract_prompt = build_contract_prompt(st.session_state.last_context)
-        st.text_area("Prompt prêt à copier", value=contract_prompt, height=650)
-        st.download_button("Télécharger le prompt d'analyse contractuelle", contract_prompt, "prompt_analyse_contrat_creatif.txt", "text/plain")
-
+    st.header("Analyse contrat IA")
+    if not st.session_state.last_context: st.info("Effectue d'abord une simulation.")
+    else: cp=build_contract_prompt(st.session_state.last_context); st.text_area("Prompt",value=cp,height=600); st.download_button("Télécharger",cp,"prompt_analyse_contrat.txt","text/plain")
 with tabs[5]:
-    st.header("Sauvegarde et restauration")
-    export_data = {
-        "version": 6,
-        "exported_at": datetime.now().isoformat(),
-        "briefs": st.session_state.briefs,
-        "opportunities": st.session_state.opportunities,
-    }
-    st.download_button("Télécharger la sauvegarde JSON", json.dumps(export_data, ensure_ascii=False, indent=2), "manager_creatifs_sauvegarde.json", "application/json")
-    uploaded = st.file_uploader("Restaurer une sauvegarde JSON", type=["json"])
-    if uploaded and st.button("Restaurer les données"):
-        try:
-            data = json.loads(uploaded.getvalue().decode("utf-8-sig"))
-            st.session_state.briefs = data.get("briefs", [])
-            st.session_state.opportunities = data.get("opportunities", [])
-            st.success("Données restaurées.")
-            st.rerun()
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
-            st.error(f"Sauvegarde invalide : {error}")
+    st.header("Sauvegarde"); data={"version":7,"exported_at":datetime.now().isoformat(),"briefs":st.session_state.briefs,"opportunities":st.session_state.opportunities}; st.download_button("Télécharger JSON",json.dumps(data,ensure_ascii=False,indent=2),"manager_creatifs.json","application/json"); up=st.file_uploader("Restaurer JSON",type=["json"])
+    if up and st.button("Restaurer"):
+        try: d=json.loads(up.getvalue().decode("utf-8-sig")); st.session_state.briefs=d.get("briefs",[]); st.session_state.opportunities=d.get("opportunities",[]); st.rerun()
+        except Exception as e: st.error(f"Fichier invalide : {e}")
