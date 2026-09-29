@@ -24,20 +24,19 @@ PROFESSIONS = [
     "Illustrateur / Illustratrice", "Retoucheur / Retoucheuse",
     "Sound designer", "Ingénieur du son", "Rédacteur / Rédactrice",
 ]
-LEVELS = ["Faible", "Mineur", "Moyen", "Important", "Très important"]
-DEFAULT_COEFFICIENTS = {
-    "Support / usage": [0.25, 0.50, 1.00, 1.75, 2.75],
-    "Diffusion": [0.20, 0.50, 1.00, 2.25, 4.00],
-    "Territoire": [0.20, 0.55, 1.00, 1.70, 2.60],
-    "Durée": [0.20, 0.55, 1.00, 1.75, 2.75],
-    "Exclusivité": [0.00, 0.50, 1.00, 2.25, 4.00],
+CRITERION_OPTIONS = {
+    "Support / usage": ["Usage interne", "Site institutionnel", "Réseaux sociaux organiques", "Presse éditoriale", "Édition commerciale", "Affichage promotionnel", "Campagne publicitaire", "Packaging / merchandising"],
+    "Diffusion": ["Moins de 1 000 exemplaires / vues", "1 000 à 10 000", "10 001 à 100 000", "100 001 à 1 000 000", "Plus de 1 000 000"],
+    "Territoire": ["Local / régional", "France", "Europe", "Monde"],
+    "Durée": ["Opération ponctuelle, 3 mois maximum", "Jusqu'à 1 an", "Jusqu'à 3 ans", "Plus de 3 ans"],
+    "Exclusivité": ["Aucune exclusivité", "Exclusivité limitée à un secteur", "Exclusivité territoriale", "Exclusivité totale"],
 }
-CRITERION_HELP = {
-    "Support / usage": "Faible : usage interne | Mineur : site institutionnel | Moyen : communication standard | Important : édition commerciale | Très important : campagne publicitaire",
-    "Diffusion": "Faible : < 1 000 | Mineur : 1 000 à 10 000 | Moyen : 10 000 à 100 000 | Important : 100 000 à 1 000 000 | Très important : > 1 000 000",
-    "Territoire": "Faible : local | Mineur : régional | Moyen : France | Important : Europe | Très important : monde",
-    "Durée": "Faible : opération ponctuelle | Mineur : quelques mois | Moyen : jusqu'à 1 an | Important : jusqu'à 3 ans | Très important : plus de 3 ans",
-    "Exclusivité": "Faible : aucune | Mineur : limitée | Moyen : sectorielle | Important : territoriale | Très important : totale",
+DEFAULT_COEFFICIENTS = {
+    "Support / usage": [0.35, 0.70, 0.75, 1.00, 1.50, 1.75, 3.00, 2.50],
+    "Diffusion": [0.50, 1.00, 2.00, 4.00, 8.00],
+    "Territoire": [0.70, 1.00, 1.75, 3.00],
+    "Durée": [0.60, 1.00, 2.00, 3.50],
+    "Exclusivité": [1.00, 2.00, 3.50, 6.00],
 }
 
 def init_state():
@@ -80,17 +79,6 @@ def calculate_match(talent, brief):
             gaps.append("À vérifier : " + ", ".join(sorted(missing)))
     else:
         score += 12.5
-    budget = float(brief.get("budget", 0) or 0)
-    rate = float(talent.get("daily_rate", 0) or 0)
-    if budget and rate:
-        if rate <= budget:
-            score += 10
-            reasons.append("Tarif compatible avec le budget indiqué")
-        elif rate <= budget * 1.15:
-            score += 5
-            gaps.append("Tarif légèrement supérieur au budget")
-        else:
-            gaps.append("Tarif supérieur au budget")
     location = (brief.get("location") or "").strip().lower()
     talent_location = (talent.get("location") or "").strip().lower()
     if location and talent_location and location == talent_location:
@@ -101,25 +89,25 @@ def calculate_match(talent, brief):
 def euro(value):
     return f"{value:,.2f} €".replace(",", " ").replace(".", ",")
 
-def compute_price(base, levels, coeffs, expenses, margin_pct, discount_pct):
+def compute_price(preparation_hours, production_hours, postproduction_hours, preparation_rate, production_rate, postproduction_rate, base_rights, selections, coeffs, expenses, margin_pct, discount_pct):
+    preparation = preparation_hours * preparation_rate
+    production = production_hours * production_rate
+    postproduction = postproduction_hours * postproduction_rate
+    production_total = preparation + production + postproduction
     details = []
-    rights_factor = 0.0
-    for criterion in DEFAULT_COEFFICIENTS:
-        idx = LEVELS.index(levels[criterion])
+    rights_factor = 1.0
+    for criterion, selection in selections.items():
+        idx = CRITERION_OPTIONS[criterion].index(selection)
         coef = float(coeffs[criterion][idx])
-        rights_factor += coef
-        details.append((criterion, levels[criterion], coef))
-    rights = base * rights_factor
-    subtotal = base + rights + expenses
+        rights_factor *= coef
+        details.append((criterion, selection, coef))
+    rights = base_rights * rights_factor
+    subtotal = production_total + rights + expenses
     margin = subtotal * margin_pct / 100
     before_discount = subtotal + margin
     discount = before_discount * discount_pct / 100
     total = max(0.0, before_discount - discount)
-    return {
-        "base": base, "rights_factor": rights_factor, "rights": rights,
-        "expenses": expenses, "margin": margin, "discount": discount,
-        "total": total, "details": details,
-    }
+    return {"preparation": preparation, "production": production, "postproduction": postproduction, "base": production_total, "rights_factor": rights_factor, "rights": rights, "expenses": expenses, "margin": margin, "discount": discount, "total": total, "details": details}
 
 def build_quote_html(client, project, talent_name, pricing, notes, validity):
     rows = "".join(
@@ -129,7 +117,7 @@ def build_quote_html(client, project, talent_name, pricing, notes, validity):
     return f"""<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>Devis - {escape(project)}</title>
 <style>body{{font-family:Arial,sans-serif;color:#21313D;margin:40px}}h1{{color:#18354A}}.box{{background:#EAF7F5;padding:16px;border-radius:10px}}table{{border-collapse:collapse;width:100%;margin:18px 0}}th,td{{border:1px solid #DDE6EA;padding:9px;text-align:left}}th{{background:#18354A;color:white}}.total{{font-size:22px;color:#0B7E76;font-weight:700}}small{{color:#65727A}}</style></head><body>
 <h1>DEVIS INDICATIF</h1><div class='box'><b>Client :</b> {escape(client)}<br><b>Projet :</b> {escape(project)}<br><b>Talent pressenti :</b> {escape(talent_name or 'À confirmer')}<br><b>Date :</b> {datetime.now().strftime('%d/%m/%Y')}<br><b>Validité :</b> {validity} jours</div>
-<h2>Détail financier</h2><table><tr><th>Poste</th><th>Montant HT</th></tr><tr><td>Production / création</td><td>{euro(pricing['base'])}</td></tr><tr><td>Droits d'utilisation</td><td>{euro(pricing['rights'])}</td></tr><tr><td>Frais</td><td>{euro(pricing['expenses'])}</td></tr><tr><td>Honoraires / marge</td><td>{euro(pricing['margin'])}</td></tr><tr><td>Remise</td><td>- {euro(pricing['discount'])}</td></tr></table>
+<h2>Détail financier</h2><table><tr><th>Poste</th><th>Montant HT</th></tr><tr><td>Préparation</td><td>{euro(pricing['preparation'])}</td></tr><tr><td>Production</td><td>{euro(pricing['production'])}</td></tr><tr><td>Postproduction</td><td>{euro(pricing['postproduction'])}</td></tr><tr><td>Droits d'utilisation</td><td>{euro(pricing['rights'])}</td></tr><tr><td>Frais</td><td>{euro(pricing['expenses'])}</td></tr><tr><td>Honoraires / marge</td><td>{euro(pricing['margin'])}</td></tr><tr><td>Remise</td><td>- {euro(pricing['discount'])}</td></tr></table>
 <p class='total'>Total HT : {euro(pricing['total'])}</p><h2>Paramètres de droits</h2><table><tr><th>Critère</th><th>Niveau</th><th>Coefficient</th></tr>{rows}</table>
 <h2>Notes et conditions</h2><p>{escape(notes).replace(chr(10), '<br>')}</p><small>Document de travail à valider avant envoi. Les coefficients constituent une aide à la tarification et ne remplacent pas une analyse juridique ou fiscale adaptée.</small></body></html>"""
 
@@ -145,14 +133,17 @@ with tabs[0]:
         professions = c2.multiselect("Profession(s) *", PROFESSIONS)
         skills = c1.text_area("Compétences / styles / logiciels", placeholder="concert, portrait, Premiere Pro, beauté...")
         location = c2.text_input("Zone géographique")
-        daily_rate = c1.number_input("Tarif de référence HT (€)", min_value=0.0, step=50.0)
+        preparation_rate = c1.number_input("Tarif préparation / heure HT (€)", min_value=0.0, step=10.0)
+        production_rate = c2.number_input("Tarif production / heure HT (€)", min_value=0.0, step=10.0)
+        postproduction_rate = c1.number_input("Tarif postproduction / heure HT (€)", min_value=0.0, step=10.0)
+        base_rights = c2.number_input("Base de droits d'utilisation HT (€)", min_value=0.0, step=50.0)
         portfolio = c2.text_input("Portfolio / lien")
         notes = st.text_area("Notes")
         if st.form_submit_button("Ajouter le talent"):
             if not name or not professions:
                 st.error("Le nom et au moins une profession sont obligatoires.")
             else:
-                st.session_state.talents.append({"id": datetime.now().timestamp(), "name": name, "professions": professions, "skills": skills, "location": location, "daily_rate": daily_rate, "portfolio": portfolio, "notes": notes})
+                st.session_state.talents.append({"id": datetime.now().timestamp(), "name": name, "professions": professions, "skills": skills, "location": location, "preparation_rate": preparation_rate, "production_rate": production_rate, "postproduction_rate": postproduction_rate, "base_rights": base_rights, "portfolio": portfolio, "notes": notes})
                 st.success("Talent ajouté.")
     for i, t in enumerate(st.session_state.talents):
         with st.expander(f"{t['name']} - {', '.join(t.get('professions', []))}"):
@@ -210,44 +201,40 @@ with tabs[2]:
 
 with tabs[3]:
     st.header("Simulateur de tarification")
-    st.write("Choisis l'importance de chaque critère pour le projet, puis ajuste les coefficients si nécessaire.")
-    with st.expander("⚙️ Modifier les coefficients du projet", expanded=True):
-        st.caption("Les cinq niveaux conservent une progression marquée entre Faible et Très important.")
-        edited = {}
-        for criterion, defaults in st.session_state.coefficients.items():
-            st.subheader(criterion)
-            cols = st.columns(5)
-            values = []
-            for i, level in enumerate(LEVELS):
-                values.append(cols[i].number_input(level, min_value=0.0, max_value=10.0, value=float(defaults[i]), step=0.05, key=f"coef_{criterion}_{i}"))
-            edited[criterion] = values
-        c1, c2 = st.columns(2)
-        if c1.button("Appliquer ces coefficients"):
-            st.session_state.coefficients = edited
-            st.success("Coefficients appliqués au projet.")
-        if c2.button("Restaurer les coefficients recommandés"):
-            st.session_state.coefficients = {k: list(v) for k, v in DEFAULT_COEFFICIENTS.items()}
-            st.rerun()
-    st.divider()
+    st.write("Renseigne précisément les heures de préparation, de production et de postproduction, puis déplace les curseurs selon l'exploitation prévue.")
+    talent_options = [""] + [t["name"] for t in st.session_state.talents]
+    talent_name = st.selectbox("Talent utilisé pour le calcul", talent_options)
+    talent = next((t for t in st.session_state.talents if t["name"] == talent_name), {})
+    st.subheader("Temps de travail")
     c1, c2, c3 = st.columns(3)
-    base = c1.number_input("Production / création HT (€)", min_value=0.0, value=1000.0, step=50.0)
-    expenses = c2.number_input("Frais HT (€)", min_value=0.0, value=0.0, step=25.0)
-    margin_pct = c3.number_input("Honoraires / marge (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0)
+    preparation_hours = c1.number_input("Heures de préparation", min_value=0.0, value=2.0, step=0.5)
+    production_hours = c2.number_input("Heures de production", min_value=0.0, value=8.0, step=0.5)
+    postproduction_hours = c3.number_input("Heures de postproduction", min_value=0.0, value=3.0, step=0.5)
+    c1, c2, c3 = st.columns(3)
+    preparation_rate = c1.number_input("Tarif préparation / heure HT (€)", min_value=0.0, value=float(talent.get("preparation_rate",0) or 0), step=10.0)
+    production_rate = c2.number_input("Tarif production / heure HT (€)", min_value=0.0, value=float(talent.get("production_rate",0) or 0), step=10.0)
+    postproduction_rate = c3.number_input("Tarif postproduction / heure HT (€)", min_value=0.0, value=float(talent.get("postproduction_rate",0) or 0), step=10.0)
+    st.subheader("Droits d'utilisation")
+    base_rights = st.number_input("Base de droits HT (€)", min_value=0.0, value=float(talent.get("base_rights",0) or 0), step=50.0)
+    selections = {}
+    for criterion, options in CRITERION_OPTIONS.items():
+        selection = st.select_slider(criterion, options=options, value=options[len(options)//2], key=f"slider_{criterion}")
+        selections[criterion] = selection
+        idx = options.index(selection)
+        st.caption(f"Choix retenu : {selection} · coefficient {st.session_state.coefficients[criterion][idx]:.2f}")
+    st.subheader("Frais et ajustements")
+    c1, c2, c3 = st.columns(3)
+    expenses = c1.number_input("Frais techniques et déplacements HT (€)", min_value=0.0, value=0.0, step=25.0)
+    margin_pct = c2.number_input("Honoraires / marge (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0)
     discount_pct = c3.number_input("Remise commerciale (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-    selected_levels = {}
-    st.subheader("Importance des critères")
-    for criterion in DEFAULT_COEFFICIENTS:
-        idx = st.select_slider(criterion, options=range(5), value=2, format_func=lambda x: LEVELS[x], key=f"level_{criterion}", help=CRITERION_HELP[criterion])
-        selected_levels[criterion] = LEVELS[idx]
-        st.caption(f"{CRITERION_HELP[criterion]} | Coefficient retenu : {st.session_state.coefficients[criterion][idx]:.2f}")
-    pricing = compute_price(base, selected_levels, st.session_state.coefficients, expenses, margin_pct, discount_pct)
+    pricing = compute_price(preparation_hours, production_hours, postproduction_hours, preparation_rate, production_rate, postproduction_rate, base_rights, selections, st.session_state.coefficients, expenses, margin_pct, discount_pct)
     st.session_state.last_pricing = pricing
     a,b,c,d = st.columns(4)
-    a.metric("Production", euro(pricing["base"]))
+    a.metric("Temps de travail", euro(pricing["base"]))
     b.metric("Droits", euro(pricing["rights"]))
-    c.metric("Coefficient cumulé", f"{pricing['rights_factor']:.2f}")
+    c.metric("Coefficient cumulé", f"× {pricing['rights_factor']:.2f}")
     d.metric("Total HT", euro(pricing["total"]))
-    st.dataframe([{"Critère": x, "Niveau": y, "Coefficient": z} for x,y,z in pricing["details"]], use_container_width=True, hide_index=True)
+    st.dataframe([{"Critère": x, "Choix": y, "Coefficient": z} for x,y,z in pricing["details"]], use_container_width=True, hide_index=True)
 
 with tabs[4]:
     st.header("Générer un devis")
