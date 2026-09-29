@@ -38,12 +38,27 @@ DEFAULT_COEFFICIENTS = {
     "Durée": [0.60, 1.00, 2.00, 3.50],
     "Exclusivité": [1.00, 2.00, 3.50, 6.00],
 }
+IMPORTANCE_OPTIONS = {
+    "Livrable technique ou accessoire · 20 %": 0.20,
+    "Création standard · 40 %": 0.40,
+    "Création centrale · 60 %": 0.60,
+    "Création à forte valeur commerciale · 80 %": 0.80,
+    "Création signature ou stratégique · 100 %": 1.00,
+}
+URGENCY_OPTIONS = {
+    "Planning normal · 0 %": 0.00,
+    "Délai resserré · 15 %": 0.15,
+    "Urgent · 30 %": 0.30,
+    "Très urgent · 50 %": 0.50,
+    "Priorité absolue · 75 %": 0.75,
+}
+MINIMUM_RIGHTS = 100.0
 
 def init_state():
     defaults = {
         "talents": [], "briefs": [], "opportunities": [],
         "coefficients": DEFAULT_COEFFICIENTS.copy(),
-        "last_pricing": None, "last_matches": [],
+        "last_pricing": None, "last_matches": [], "last_contract_context": {},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -89,11 +104,17 @@ def calculate_match(talent, brief):
 def euro(value):
     return f"{value:,.2f} €".replace(",", " ").replace(".", ",")
 
-def compute_price(preparation_hours, production_hours, postproduction_hours, preparation_rate, production_rate, postproduction_rate, base_rights, selections, coeffs, expenses, margin_pct, discount_pct):
+def compute_price(preparation_hours, production_hours, postproduction_hours, preparation_rate, production_rate, postproduction_rate, importance_label, urgency_label, selections, coeffs, expenses, margin_pct, discount_pct):
     preparation = preparation_hours * preparation_rate
     production = production_hours * production_rate
     postproduction = postproduction_hours * postproduction_rate
     production_total = preparation + production + postproduction
+
+    importance_rate = IMPORTANCE_OPTIONS[importance_label]
+    urgency_rate = URGENCY_OPTIONS[urgency_label]
+    base_rights = production_total * importance_rate
+    urgency_amount = production_total * urgency_rate
+
     details = []
     rights_factor = 1.0
     for criterion, selection in selections.items():
@@ -101,13 +122,39 @@ def compute_price(preparation_hours, production_hours, postproduction_hours, pre
         coef = float(coeffs[criterion][idx])
         rights_factor *= coef
         details.append((criterion, selection, coef))
-    rights = base_rights * rights_factor
-    subtotal = production_total + rights + expenses
+
+    calculated_rights = base_rights * rights_factor
+    rights = max(MINIMUM_RIGHTS, calculated_rights) if base_rights > 0 else 0.0
+    minimum_applied = base_rights > 0 and calculated_rights < MINIMUM_RIGHTS
+
+    subtotal = production_total + urgency_amount + rights + expenses
     margin = subtotal * margin_pct / 100
     before_discount = subtotal + margin
     discount = before_discount * discount_pct / 100
     total = max(0.0, before_discount - discount)
-    return {"preparation": preparation, "production": production, "postproduction": postproduction, "base": production_total, "rights_factor": rights_factor, "rights": rights, "expenses": expenses, "margin": margin, "discount": discount, "total": total, "details": details}
+
+    return {
+        "preparation": preparation,
+        "production": production,
+        "postproduction": postproduction,
+        "base": production_total,
+        "importance_label": importance_label,
+        "importance_rate": importance_rate,
+        "urgency_label": urgency_label,
+        "urgency_rate": urgency_rate,
+        "urgency_amount": urgency_amount,
+        "base_rights": base_rights,
+        "rights_factor": rights_factor,
+        "calculated_rights": calculated_rights,
+        "minimum_rights": MINIMUM_RIGHTS,
+        "minimum_applied": minimum_applied,
+        "rights": rights,
+        "expenses": expenses,
+        "margin": margin,
+        "discount": discount,
+        "total": total,
+        "details": details,
+    }
 
 def build_quote_html(client, project, talent_name, pricing, notes, validity):
     rows = "".join(
@@ -117,13 +164,13 @@ def build_quote_html(client, project, talent_name, pricing, notes, validity):
     return f"""<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>Devis - {escape(project)}</title>
 <style>body{{font-family:Arial,sans-serif;color:#21313D;margin:40px}}h1{{color:#18354A}}.box{{background:#EAF7F5;padding:16px;border-radius:10px}}table{{border-collapse:collapse;width:100%;margin:18px 0}}th,td{{border:1px solid #DDE6EA;padding:9px;text-align:left}}th{{background:#18354A;color:white}}.total{{font-size:22px;color:#0B7E76;font-weight:700}}small{{color:#65727A}}</style></head><body>
 <h1>DEVIS INDICATIF</h1><div class='box'><b>Client :</b> {escape(client)}<br><b>Projet :</b> {escape(project)}<br><b>Talent pressenti :</b> {escape(talent_name or 'À confirmer')}<br><b>Date :</b> {datetime.now().strftime('%d/%m/%Y')}<br><b>Validité :</b> {validity} jours</div>
-<h2>Détail financier</h2><table><tr><th>Poste</th><th>Montant HT</th></tr><tr><td>Préparation</td><td>{euro(pricing['preparation'])}</td></tr><tr><td>Production</td><td>{euro(pricing['production'])}</td></tr><tr><td>Postproduction</td><td>{euro(pricing['postproduction'])}</td></tr><tr><td>Droits d'utilisation</td><td>{euro(pricing['rights'])}</td></tr><tr><td>Frais</td><td>{euro(pricing['expenses'])}</td></tr><tr><td>Honoraires / marge</td><td>{euro(pricing['margin'])}</td></tr><tr><td>Remise</td><td>- {euro(pricing['discount'])}</td></tr></table>
+<h2>Détail financier</h2><table><tr><th>Poste</th><th>Montant HT</th></tr><tr><td>Préparation</td><td>{euro(pricing['preparation'])}</td></tr><tr><td>Production</td><td>{euro(pricing['production'])}</td></tr><tr><td>Postproduction</td><td>{euro(pricing['postproduction'])}</td></tr><tr><td>Majoration urgence</td><td>{euro(pricing['urgency_amount'])}</td></tr><tr><td>Droits d'utilisation</td><td>{euro(pricing['rights'])}</td></tr><tr><td>Frais</td><td>{euro(pricing['expenses'])}</td></tr><tr><td>Honoraires / marge</td><td>{euro(pricing['margin'])}</td></tr><tr><td>Remise</td><td>- {euro(pricing['discount'])}</td></tr></table>
 <p class='total'>Total HT : {euro(pricing['total'])}</p><h2>Paramètres de droits</h2><table><tr><th>Critère</th><th>Niveau</th><th>Coefficient</th></tr>{rows}</table>
 <h2>Notes et conditions</h2><p>{escape(notes).replace(chr(10), '<br>')}</p><small>Document de travail à valider avant envoi. Les coefficients constituent une aide à la tarification et ne remplacent pas une analyse juridique ou fiscale adaptée.</small></body></html>"""
 
 st.markdown("<div class='main-title'><h1>🎨 ESN Artistique</h1><p>Talents, briefs, matching, simulateur de droits et devis.</p></div>", unsafe_allow_html=True)
 
-tabs = st.tabs(["Talents", "Briefs", "Matching", "Simulateur", "Devis", "Suivi", "Sauvegarde"])
+tabs = st.tabs(["Talents", "Briefs", "Matching", "Simulateur", "Devis", "Suivi", "Analyse contrat IA", "Sauvegarde"])
 
 with tabs[0]:
     st.header("Talents")
@@ -136,14 +183,13 @@ with tabs[0]:
         preparation_rate = c1.number_input("Tarif préparation / heure HT (€)", min_value=0.0, step=10.0)
         production_rate = c2.number_input("Tarif production / heure HT (€)", min_value=0.0, step=10.0)
         postproduction_rate = c1.number_input("Tarif postproduction / heure HT (€)", min_value=0.0, step=10.0)
-        base_rights = c2.number_input("Base de droits d'utilisation HT (€)", min_value=0.0, step=50.0)
         portfolio = c2.text_input("Portfolio / lien")
         notes = st.text_area("Notes")
         if st.form_submit_button("Ajouter le talent"):
             if not name or not professions:
                 st.error("Le nom et au moins une profession sont obligatoires.")
             else:
-                st.session_state.talents.append({"id": datetime.now().timestamp(), "name": name, "professions": professions, "skills": skills, "location": location, "preparation_rate": preparation_rate, "production_rate": production_rate, "postproduction_rate": postproduction_rate, "base_rights": base_rights, "portfolio": portfolio, "notes": notes})
+                st.session_state.talents.append({"id": datetime.now().timestamp(), "name": name, "professions": professions, "skills": skills, "location": location, "preparation_rate": preparation_rate, "production_rate": production_rate, "postproduction_rate": postproduction_rate, "portfolio": portfolio, "notes": notes})
                 st.success("Talent ajouté.")
     for i, t in enumerate(st.session_state.talents):
         with st.expander(f"{t['name']} - {', '.join(t.get('professions', []))}"):
@@ -214,8 +260,23 @@ with tabs[3]:
     preparation_rate = c1.number_input("Tarif préparation / heure HT (€)", min_value=0.0, value=float(talent.get("preparation_rate",0) or 0), step=10.0)
     production_rate = c2.number_input("Tarif production / heure HT (€)", min_value=0.0, value=float(talent.get("production_rate",0) or 0), step=10.0)
     postproduction_rate = c3.number_input("Tarif postproduction / heure HT (€)", min_value=0.0, value=float(talent.get("postproduction_rate",0) or 0), step=10.0)
-    st.subheader("Droits d'utilisation")
-    base_rights = st.number_input("Base de droits HT (€)", min_value=0.0, value=float(talent.get("base_rights",0) or 0), step=50.0)
+    st.subheader("Valeur du rendu et urgence")
+    importance_label = st.select_slider(
+        "Importance intrinsèque du rendu",
+        options=list(IMPORTANCE_OPTIONS.keys()),
+        value="Création centrale · 60 %",
+    )
+    urgency_label = st.select_slider(
+        "Niveau d'urgence",
+        options=list(URGENCY_OPTIONS.keys()),
+        value="Planning normal · 0 %",
+    )
+    st.caption(
+        "La base de droits est calculée automatiquement : coût créatif × importance du rendu. "
+        "L'urgence majore uniquement le temps de travail, pas les droits."
+    )
+
+    st.subheader("Étendue des droits d'utilisation")
     selections = {}
     for criterion, options in CRITERION_OPTIONS.items():
         selection = st.select_slider(criterion, options=options, value=options[len(options)//2], key=f"slider_{criterion}")
@@ -227,13 +288,28 @@ with tabs[3]:
     expenses = c1.number_input("Frais techniques et déplacements HT (€)", min_value=0.0, value=0.0, step=25.0)
     margin_pct = c2.number_input("Honoraires / marge (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0)
     discount_pct = c3.number_input("Remise commerciale (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-    pricing = compute_price(preparation_hours, production_hours, postproduction_hours, preparation_rate, production_rate, postproduction_rate, base_rights, selections, st.session_state.coefficients, expenses, margin_pct, discount_pct)
+    pricing = compute_price(
+        preparation_hours, production_hours, postproduction_hours,
+        preparation_rate, production_rate, postproduction_rate,
+        importance_label, urgency_label, selections,
+        st.session_state.coefficients, expenses, margin_pct, discount_pct,
+    )
+    st.session_state.last_contract_context = {
+        "importance": importance_label,
+        "urgency": urgency_label,
+        "selections": selections,
+        "pricing": pricing,
+        "talent": talent_name,
+    }
     st.session_state.last_pricing = pricing
-    a,b,c,d = st.columns(4)
+    a,b,c,d,e = st.columns(5)
     a.metric("Temps de travail", euro(pricing["base"]))
-    b.metric("Droits", euro(pricing["rights"]))
-    c.metric("Coefficient cumulé", f"× {pricing['rights_factor']:.2f}")
-    d.metric("Total HT", euro(pricing["total"]))
+    b.metric("Base de droits", euro(pricing["base_rights"]))
+    c.metric("Urgence", euro(pricing["urgency_amount"]))
+    d.metric("Droits", euro(pricing["rights"]))
+    e.metric("Total HT", euro(pricing["total"]))
+    if pricing["minimum_applied"]:
+        st.info(f"Le minimum de droits de {euro(pricing['minimum_rights'])} a été appliqué.")
     st.dataframe([{"Critère": x, "Choix": y, "Coefficient": z} for x,y,z in pricing["details"]], use_container_width=True, hide_index=True)
 
 with tabs[4]:
@@ -268,9 +344,97 @@ with tabs[5]:
             st.success("Opportunité ajoutée.")
     st.dataframe(st.session_state.opportunities, use_container_width=True, hide_index=True)
 
+
 with tabs[6]:
+    st.header("Prompt d'analyse du contrat avec une IA")
+    st.warning(
+        "Ce prompt aide à repérer les écarts entre le contrat et les paramètres commerciaux. "
+        "Il ne remplace pas la validation d'un avocat ou d'un professionnel du droit."
+    )
+
+    context = st.session_state.get("last_contract_context", {})
+    pricing = context.get("pricing", {})
+    selections = context.get("selections", {})
+
+    if not pricing:
+        st.info("Effectue d'abord une simulation tarifaire pour préremplir les critères.")
+    else:
+        contract_text_placeholder = "COLLER ICI LE TEXTE INTÉGRAL DU CONTRAT À ANALYSER"
+        rights_lines = "\n".join(
+            f"- {criterion} : {value}"
+            for criterion, value in selections.items()
+        )
+        prompt = f"""Tu agis comme assistant de revue contractuelle pour une prestation créative en France.
+
+OBJECTIF
+Comparer le contrat reçu avec les paramètres commerciaux convenus ci-dessous. Identifier les clauses conformes, absentes, ambiguës, plus larges que prévu ou défavorables au talent. Ne pas inventer le contenu manquant. Citer mot pour mot les passages pertinents du contrat et préciser leur emplacement si les numéros d'articles sont disponibles.
+
+IMPORTANT
+- Cette analyse est une aide opérationnelle et ne remplace pas un avis juridique.
+- Distinguer clairement les faits présents dans le contrat, les risques identifiés et les recommandations.
+- Ne pas conclure qu'une clause est illégale sans base certaine. Indiquer plutôt qu'elle mérite une validation juridique.
+- Signaler toute contradiction entre le devis, le contrat, les annexes et les conditions générales.
+
+PARAMÈTRES COMMERCIAUX DE RÉFÉRENCE
+- Talent : {context.get('talent') or 'Non renseigné'}
+- Importance du rendu : {context.get('importance')}
+- Urgence : {context.get('urgency')}
+- Temps de préparation facturé : {euro(pricing.get('preparation', 0))}
+- Temps de production facturé : {euro(pricing.get('production', 0))}
+- Temps de postproduction facturé : {euro(pricing.get('postproduction', 0))}
+- Majoration d'urgence : {euro(pricing.get('urgency_amount', 0))}
+- Base de droits calculée : {euro(pricing.get('base_rights', 0))}
+- Droits d'utilisation facturés : {euro(pricing.get('rights', 0))}
+- Frais : {euro(pricing.get('expenses', 0))}
+- Honoraires / marge : {euro(pricing.get('margin', 0))}
+- Remise : {euro(pricing.get('discount', 0))}
+- Total HT : {euro(pricing.get('total', 0))}
+
+PÉRIMÈTRE DES DROITS CONVENU
+{rights_lines}
+
+POINTS À CONTRÔLER IMPÉRATIVEMENT
+1. Identité exacte des parties, capacité à signer et coordonnées.
+2. Description de la mission, livrables, formats, nombre de versions et critères d'acceptation.
+3. Planning, date de livraison, disponibilité attendue et niveau d'urgence.
+4. Prix HT, taxes, acompte, échéancier, délai de paiement, pénalités et frais.
+5. Nombre de retours ou corrections inclus et facturation des demandes supplémentaires.
+6. Droits d'utilisation : droits concernés, supports, finalités, nombre d'exemplaires ou audience, territoire, durée et exclusivité.
+7. Vérifier si le contrat autorise adaptation, modification, traduction, sous-licence, rétrocession à des tiers ou exploitation sur des supports futurs.
+8. Vérifier si la cession est conditionnée au paiement complet.
+9. Vérifier si la rémunération des droits est distincte, incluse ou absente, et si elle correspond aux paramètres convenus.
+10. Crédit du talent, droit moral, respect de l'intégrité de l'œuvre et conditions d'anonymat éventuelles.
+11. Droit à l'image, autorisations des personnes, lieux, marques, œuvres ou musiques représentés.
+12. Exclusivité, non-concurrence, non-sollicitation et conséquences pour les autres clients du talent.
+13. Annulation, report, force majeure, acompte conservé et indemnité d'immobilisation.
+14. Garanties, responsabilité, plafond de responsabilité, assurance et garantie d'éviction.
+15. Confidentialité, données personnelles, utilisation du portfolio et droit de communiquer sur la mission.
+16. Sous-traitance, recours à d'autres talents et propriété des fichiers sources ou rushes.
+17. Résiliation, préavis, effets de la fin du contrat et droits déjà acquis.
+18. Droit applicable, juridiction compétente, médiation et ordre de priorité des documents.
+
+FORMAT DE RÉPONSE ATTENDU
+A. Résumé exécutif en 10 lignes maximum.
+B. Tableau avec les colonnes : Critère, Attendu, Clause trouvée, Statut (Conforme / Partiel / Absent / Plus large / Risque), Niveau de risque, Action recommandée.
+C. Liste des clauses à négocier en priorité.
+D. Proposition de rédaction corrective pour chaque écart important.
+E. Questions à poser au client avant signature.
+F. Conclusion : signer en l'état, signer après clarification, ou transmettre à un professionnel du droit, avec justification factuelle.
+
+CONTRAT À ANALYSER
+{contract_text_placeholder}
+"""
+        st.text_area("Prompt prêt à copier", value=prompt, height=650)
+        st.download_button(
+            "Télécharger le prompt en .txt",
+            prompt,
+            "prompt_analyse_contrat_creatif.txt",
+            "text/plain",
+        )
+
+with tabs[7]:
     st.header("Sauvegarde et restauration")
-    export_data = {"version": 3, "exported_at": datetime.now().isoformat(), "talents": st.session_state.talents, "briefs": st.session_state.briefs, "opportunities": st.session_state.opportunities, "coefficients": st.session_state.coefficients}
+    export_data = {"version": 4, "exported_at": datetime.now().isoformat(), "talents": st.session_state.talents, "briefs": st.session_state.briefs, "opportunities": st.session_state.opportunities, "coefficients": st.session_state.coefficients}
     st.download_button("Télécharger la sauvegarde JSON", json.dumps(export_data, ensure_ascii=False, indent=2), "esn_artistique_sauvegarde.json", "application/json")
     uploaded = st.file_uploader("Restaurer une sauvegarde JSON", type=["json"])
     if uploaded and st.button("Restaurer les données"):
