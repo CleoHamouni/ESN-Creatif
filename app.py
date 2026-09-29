@@ -627,8 +627,19 @@ with tabs[2]:
     if not st.session_state.last_pricing or not st.session_state.last_context:
         st.info("Calcule d'abord un tarif dans le simulateur.")
     else:
-        context = st.session_state.last_context
-        brief = st.session_state.briefs[context["brief_index"]]
+        context = st.session_state.last_context or {}
+        brief_index = context.get("brief_index")
+
+        if not isinstance(brief_index, int) or not (0 <= brief_index < len(st.session_state.briefs)):
+            st.warning(
+                "Le brief lié à l'ancienne simulation n'est plus disponible. "
+                "Retourne dans l'onglet Simulateur, sélectionne un brief et recalcule le tarif."
+            )
+            st.session_state.last_context = None
+            st.session_state.last_pricing = None
+            st.stop()
+
+        brief = st.session_state.briefs[brief_index]
         pricing = st.session_state.last_pricing
         st.write(f"**Client :** {brief['client']}  ")
         st.write(f"**Projet :** {brief['title']}  ")
