@@ -85,43 +85,77 @@ def compute_price(ph,prod_h,post_h,rprep,rprod,rpost,importance,urgency,selectio
 
 def brief_prompt(b):
     jobs=", ".join(b.get("professions",[])) or "Non renseignés"
-    return f"""Tu agis comme business manager de prestations créatives. À partir du brief ci-dessous, pose uniquement les questions encore nécessaires. Maximum 10 questions prioritaires et 6 complémentaires. N'invente aucune réponse.
+    return f"""Tu agis comme business manager de prestations créatives et tu prépares les questions à poser directement au client.
 
-BRIEF
+OBJECTIF
+À partir du brief ci-dessous, formule uniquement les questions encore utiles pour finaliser le périmètre et compléter le simulateur. Les questions doivent être simples, neutres, professionnelles et directement adressées au client en utilisant « vous ».
+
+RÈGLES IMPÉRATIVES
+- Ne formule aucune critique sur les choix déjà faits par le client.
+- Ne présente jamais une situation normale comme une incohérence.
+- La date de l'événement peut naturellement être antérieure à la date de rendu. C'est le fonctionnement habituel d'une captation suivie d'une postproduction. Ne pose aucune question sur cet ordre chronologique.
+- Pose une question sur les dates uniquement si une date manque, si le rendu précède l'événement ou si des rendus intermédiaires doivent être précisés.
+- Ne remets pas en cause la capacité d'un talent à cumuler plusieurs métiers.
+- Ne demande pas si le staffing est « humainement possible » et ne recommande pas automatiquement d'augmenter l'équipe.
+- Si la composition de l'équipe n'est pas claire, demande seulement au client si d'autres intervenants sont déjà prévus ou souhaités, et quelles séquences chacun doit couvrir.
+- Ne fais aucune remarque interne, aucun jugement et aucune analyse destinée au prestataire dans la liste des questions client.
+- Ne demande pas deux fois une information déjà clairement renseignée.
+- Maximum 10 questions prioritaires et 6 questions complémentaires.
+
+BRIEF CONNU
 - Client / projet : {b.get('client')} / {b.get('title')}
 - Date de saisie : {fmt_date(b.get('brief_date'))}
 - Date de l'événement : {fmt_date(b.get('event_date'))}
 - Date de rendu : {fmt_date(b.get('delivery_date'))}
-- Profils / métiers : {b.get('profile_count')} / {jobs}
-- Cumul de métiers : {b.get('multi_role_allowed')}
-- Objectif / cible / message : {b.get('business_goal') or 'NC'} / {b.get('target_audience') or 'NC'} / {b.get('key_message') or 'NC'}
-- Livrables : {b.get('deliverables') or 'NC'}
+- Nombre de profils / métiers : {b.get('profile_count')} / {jobs}
+- Cumul de métiers possible : {b.get('multi_role_allowed')}
+- Objectif : {b.get('business_goal') or 'Non renseigné'}
+- Public cible : {b.get('target_audience') or 'Non renseigné'}
+- Message : {b.get('key_message') or 'Non renseigné'}
+- Livrables : {b.get('deliverables') or 'Non renseignés'}
 - Budget : {budget_summary(b)}
 - Abonnés réseaux sociaux : {b.get('social_followers',0)}
-- Vues attendues : {b.get('expected_views',0)}
+- Vues ou portée attendue : {b.get('expected_views',0)}
 
 CRITÈRES DU SIMULATEUR DÉJÀ SAISIS
 - Préparation : {b.get('prep_hours_estimate',0)} h
 - Production : {b.get('production_hours_estimate',0)} h
 - Postproduction : {b.get('post_hours_estimate',0)} h
-- Importance : {b.get('importance_criterion') or 'NC'}
-- Urgence : {b.get('urgency_criterion') or 'NC'}
-- Support : {b.get('support_criterion') or 'NC'}
-- Diffusion : {b.get('diffusion_criterion') or 'NC'}
-- Territoire : {b.get('territory_criterion') or 'NC'}
-- Durée : {b.get('duration_criterion') or 'NC'}
-- Exclusivité : {b.get('exclusivity_criterion') or 'NC'}
+- Importance : {b.get('importance_criterion') or 'Non renseignée'}
+- Urgence : {b.get('urgency_criterion') or 'Non renseignée'}
+- Support : {b.get('support_criterion') or 'Non renseigné'}
+- Diffusion : {b.get('diffusion_criterion') or 'Non renseignée'}
+- Territoire : {b.get('territory_criterion') or 'Non renseigné'}
+- Durée : {b.get('duration_criterion') or 'Non renseignée'}
+- Exclusivité : {b.get('exclusivity_criterion') or 'Non renseignée'}
 - Frais estimés : {euro(b.get('estimated_expenses'))}
 
-PRIORITÉ
-Complète d'abord les critères du simulateur encore inconnus : tâches de préparation, durée réelle de production, volume de postproduction, importance commerciale, urgence justifiée, supports, audience/tirage, territoire, durée, exclusivité, frais, retours et fichiers sources. Pour les réseaux sociaux, demande si le nombre d'abonnés correspond au compte de la marque, aux comptes partenaires ou à l'audience cumulée, et distingue abonnés, portée estimée et achat média.
+QUESTIONS À PRIVILÉGIER
+1. Livrables exacts : nombre de photos, vidéos, formats, durées, versions et déclinaisons attendues.
+2. Déroulé de l'événement : horaires, temps forts, séquences prioritaires et contraintes d'accès.
+3. Préparation attendue : réunion, repérage, script, storyboard, tests ou préparation matérielle.
+4. Production : amplitude de présence, zones à couvrir et moments indispensables.
+5. Postproduction : retouche, montage, étalonnage, son, sous-titres, formats et rendus intermédiaires.
+6. Équipe prévue : « Avez-vous prévu d'autres photographes, vidéastes, techniciens ou intervenants sur place ? Si oui, quels seront leurs rôles et les séquences qu'ils couvriront ? »
+7. Validation : personne qui centralise les retours, nombre d'allers-retours et date de validation finale.
+8. Supports et diffusion : réseaux, site, presse, affichage, publicité, partenaires et achat média.
+9. Audience : compte principal, comptes partenaires, audience cumulée, abonnés et portée estimée.
+10. Droits : territoire, durée, exclusivité, modifications, réutilisation et transmission à des partenaires.
+11. Frais : matériel, studio, transport, hébergement, accréditations, licences et achats externes.
+12. Budget : ce que l'enveloppe inclut ou, si le client attend une estimation, les options indispensables et facultatives.
 
-FORMAT
-A. 10 questions prioritaires maximum.
-B. 6 questions complémentaires maximum.
-C. Tableau « Critère simulateur | Réponse connue | À confirmer ».
-D. Hypothèses utilisables pour l'estimation automatique.
-E. Points bloquants avant devis.
+EXEMPLES DE TON ATTENDU
+- « Quels sont les moments de l'événement que vous souhaitez absolument voir couverts en photo et en vidéo ? »
+- « Avez-vous prévu d'autres photographes, vidéastes ou intervenants sur place, et comment souhaitez-vous répartir les séquences entre eux ? »
+- « Souhaitez-vous un premier lot de contenus rapidement après l'événement, puis un rendu complet à la date prévue ? »
+- « Sur quels comptes et supports les contenus seront-ils publiés, et quelle audience estimez-vous toucher au total ? »
+
+FORMAT DE SORTIE
+A. 10 questions prioritaires maximum, directement adressées au client.
+B. 6 questions complémentaires maximum, directement adressées au client.
+C. Tableau « Critère du simulateur | Information connue | Question client à poser ».
+D. Hypothèses provisoires pour l'estimation automatique, clairement séparées des questions client.
+E. Informations réellement bloquantes avant devis, sans exagérer les risques.
 """
 
 def contract_prompt(ctx):
